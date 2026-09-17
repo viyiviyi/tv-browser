@@ -114,10 +114,48 @@ const DROPDOWN_HTML = `<!doctype html><html lang="zh"><head><meta charset="utf-8
   </div>
 </body></html>`;
 
+/**
+ * 顶栏 + 飘在空白上的浮窗 —— 复刻 B 站头像浮窗那个场景。
+ *
+ * 三个要点，缺一个就测不出东西：
+ *   1. 顶栏是 "absolute + 高 z-index + 贴顶 + 又宽又扁" 的常驻横条，不是浮层；
+ *   2. 浮窗挂在顶栏的 DOM 子树**外面**，它下面是一片没有链接的空白，
+ *      所以"压住了别的候选"这条判据在它身上算出来是 0；
+ *   3. 浮窗两项之间留了很大的间距，而斜下方有个 #e1 —— 从浮窗第一项按 ↓ 时，
+ *      #e1 在几何上比浮窗第二项更近。没有"层内优先"的话就会跳到 #e1 去，
+ *      这正是"浮窗里只能走前几项、再往下就跳到别处"。
+ */
+const TOPBAR_HTML = `<!doctype html><html lang="zh"><head><meta charset="utf-8">
+<title>顶栏与浮窗</title><style>${PAGE_CSS}
+  #bar { position:absolute; top:0; left:0; width:100%; height:56px; z-index:100;
+      background:#22262e; border-bottom:1px solid #3b3d44;
+      display:flex; align-items:center; padding:0 16px; box-sizing:border-box; }
+  #bar a { width:auto; margin:0 8px 0 0; padding:12px 16px; }
+  #popup { position:absolute; top:60px; left:24px; width:220px; z-index:99;
+      background:#2a2f3a; border:1px solid #3b3d44; border-radius:10px; padding:8px; }
+  #popup a { display:block; width:auto; margin:0 0 152px; padding:12px 14px; }
+  #popup a:last-child { margin-bottom:0; }
+</style></head><body>
+  <div id="bar">
+    <a id="home" href="#">首页</a>
+    <a id="avatar" href="#">头像</a>
+  </div>
+  <div id="popup">
+    <a id="p1" href="#">个人中心</a>
+    <a id="p2" href="#">退出登录</a>
+  </div>
+  <a class="card" id="e1" href="#"
+     style="position:absolute; left:200px; top:130px; width:200px; margin:0;">斜下方的内容</a>
+  <a class="card" id="c1" href="#"
+     style="position:absolute; left:24px; top:420px; width:320px; margin:0;">更下方的内容</a>
+  <div style="height:2000px;"></div>
+</body></html>`;
+
 const ROUTES = {
   '/': ['text/html; charset=utf-8', PAGE_HTML],
   '/overlay': ['text/html; charset=utf-8', OVERLAY_HTML],
   '/dropdown': ['text/html; charset=utf-8', DROPDOWN_HTML],
+  '/topbar': ['text/html; charset=utf-8', TOPBAR_HTML],
   '/target': ['text/html; charset=utf-8', TARGET_HTML],
   '/keynav-web.js': ['application/javascript; charset=utf-8', KEYNAV_WEB],
   '/early.js': ['application/javascript; charset=utf-8', EARLY_JS],
@@ -450,11 +488,78 @@ try {
     check('再按 ↓ 走菜单项三', (await currentId()) === 'm3', `现在在 ${await currentId()}`);
 
     await key(page, 'down');
-    check('菜单走到底也留在菜单里（不会莫名跳到页面内容）',
-      (await currentId()) === 'm3', `现在在 ${await currentId()}`);
+    check('菜单走到底之后再按 ↓ 可以走到页面内容（不把人关在层里）',
+      (await currentId()) === 'page1', `现在在 ${await currentId()}`);
 
     await key(page, 'up');
-    check('按 ↑ 能往回走', (await currentId()) === 'm2', `现在在 ${await currentId()}`);
+    const back = await currentId();
+    check('按 ↑ 能回到菜单里', ['m1', 'm2', 'm3'].includes(back), `现在在 ${back}`);
+    await page.close();
+  }
+
+  /* ------------------------------ 顶栏不是浮层（B 站头像浮窗那个场景）-- */
+  {
+    const page = await browser.newPage({ viewport: { width: 960, height: 540 } });
+    await boot(page, `${BASE}/topbar`);
+
+    const selectId = (id) => page.evaluate((wanted) => {
+      const list = window.__kb.refresh();
+      const i = list.findIndex((t) => t.el && t.el.id === wanted);
+      if (i < 0) return -1;
+      window.__kb.selectAt(i);
+      return i;
+    }, id);
+    const currentId = () => page.evaluate(() =>
+      window.__kb.state.current && window.__kb.state.current.el.id);
+
+    check('能选中顶栏里的头像', (await selectId('avatar')) >= 0);
+
+    await key(page, 'down');
+    check('从顶栏的头像按 ↓，能进到挂在它外面的浮窗里（没被顶栏挡住）',
+      (await currentId()) === 'p1', `现在在 ${await currentId()}`);
+
+    await key(page, 'down');
+    check('浮窗里继续往下走（斜下方那块内容更近，但不该被它抢走）',
+      (await currentId()) === 'p2', `现在在 ${await currentId()}`);
+
+    await key(page, 'down');
+    const afterPopup = await currentId();
+    check('浮窗走完之后能落到页面内容上（也不会被关在浮窗里）',
+      afterPopup === 'c1', `现在在 ${afterPopup}`);
+
+    await key(page, 'up');
+    const backIn = await currentId();
+    check('按 ↑ 能回到浮窗里', ['p1', 'p2'].includes(backIn), `现在在 ${backIn}`);
+
+    /*
+     * 在浮层里上下走，绝对不能把整个页面滚走 ——
+     * 以前浮层内找不到下一个目标时会去"翻一屏"（一次最多 4 屏），
+     * 表现就是在浮出层里按上下键、页面自己跑掉了。
+     */
+    const scrollTop = () => page.evaluate(() => {
+      const se = document.scrollingElement;
+      return se ? se.scrollTop : 0;
+    });
+
+    const before = await scrollTop();
+    await key(page, 'up');
+    await key(page, 'down');
+    await key(page, 'up');
+    await key(page, 'down');
+    const after = await scrollTop();
+    check('在浮层里上下走不会滚动整个页面', after === before, `${before} → ${after}`);
+
+    // 把层外的内容藏掉：这时层内已经到底，按 ↓ 该停住，而不是去翻屏找视口外的东西
+    await page.evaluate(() => {
+      const c = document.getElementById('c1');
+      if (c) c.style.display = 'none';
+    });
+    await page.waitForTimeout(120);
+    const before2 = await scrollTop();
+    await key(page, 'down');
+    await key(page, 'down');
+    const after2 = await scrollTop();
+    check('浮层里走到头了也不翻屏滚页面', after2 === before2, `${before2} → ${after2}`);
     await page.close();
   }
 

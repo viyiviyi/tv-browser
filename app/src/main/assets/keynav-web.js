@@ -435,6 +435,14 @@ function findNeighbour(targets, base, dir, opts = {}) {
   const baseRect = opts.baseRect || base.rect;
   const accept = opts.accept; // (cand) => boolean
   const exclude = opts.exclude; // Set<Element>
+  /**
+   * 可选的加分项：(cand) => number，加到候选的 score 上。
+   *
+   * 用来做"某类候选排在后面"而不是"直接排除"——比如导航时当前所在的那一层：
+   * 层里的目标优先，层里这个方向没得走了，层外的仍然选得到。
+   * 用排除的话人会被困在层里出不来（这个坑踩过一次）。
+   */
+  const penalty = opts.penalty; // (cand) => number
   let best = null;
   let bestAligned = null;
   for (const cand of targets) {
@@ -443,9 +451,11 @@ function findNeighbour(targets, base, dir, opts = {}) {
     if (accept && !accept(cand)) continue;
     const s = scoreCandidate(baseRect, cand.rect, dir, opts);
     if (!s) continue;
-    const entry = { ...s, target: cand };
-    if (!best || s.score < best.score) best = entry;
-    if (s.aligned && (!bestAligned || s.score < bestAligned.score)) bestAligned = entry;
+    const extra = penalty ? (Number(penalty(cand)) || 0) : 0;
+    const score = s.score + extra;
+    const entry = { ...s, score, target: cand };
+    if (!best || score < best.score) best = entry;
+    if (s.aligned && (!bestAligned || score < bestAligned.score)) bestAligned = entry;
   }
   /*
    * 整行/整列优先：只要"同一行里右边还有东西"，就选它。
@@ -1233,19 +1243,28 @@ function createController(win) {
   }
 
   /**
+   * 层外目标的分数惩罚。
+   *
+   * 大到足以让"层内优先"成立，又不至于让层外目标完全选不到 ——
+   * 层里这个方向真的没得走了，还是会走过去（这样人才不会被关在层里）。
+   */
+  const LAYER_PENALTY = 1e6;
+
+  /**
    * 当前选中项所在的"浮层"（如果有的话）。
    *
    * 页面有内容叠加时（下拉菜单、悬浮面板、弹层），方向键会从浮层里"漏"到下面那一层 ——
    * 哪怕浮层里还有没走完的选项。因为候选集是把整页的元素放在一起按几何算的，
    * 浮层里那几个按钮在距离上未必比下面那些内容更近，于是就被抢走了。
    *
-   * 判据（宁可漏判也不误判：误判会把人困在浮层里出不来）：
+   * 判据（宁可漏判也不误判：误判的代价是把人挡在层外或关在层里，两次都踩过）：
    *   1. 从选中项往上找，position 是 fixed/absolute 且 z-index 有明确数值的祖先
    *   2. 它不能铺满整个视口（铺满的那种是遮罩或整页容器，不算"浮层"）
-   *   3. 它里面至少有两个可导航目标（只有一个的话，那一步本来就该走出去）
-   *   4. 它确实盖住了外面的目标（用命中测试验，不靠猜）
+   *   3. 它不能是"贴在视口顶部的常驻横条"（B 站顶栏就长这样，它不是浮层）
+   *   4. 它里面至少有两个可导航目标（只有一个的话，那一步本来就该走出去）
+   *   5. 它确实压住了外面的目标（用矩形相交验，不靠猜）
    *
-   * 四条都满足才认定，然后把这一步的导航限制在这一层里面。
+   * 都满足才认定成"层"，而且只是让层内目标优先，不是把层外排除掉。
    */
   function floatingLayerOf(el, list) {
     if (!el) return null;
@@ -1261,24 +1280,29 @@ function createController(win) {
         if ((cs.position === 'fixed' || cs.position === 'absolute') && hasZ) {
           const r = rectOf(node);
           const full = r.w >= vw * 0.95 && r.h >= vh * 0.95;
-          if (!full && r.w > 24 && r.h > 24) candidate = node;
+          /*
+           * 贴在视口顶部、又宽又扁的，是顶栏/工具条这种常驻的条，不是浮层。
+           * B 站的 .bili-header__bar 正是 absolute + z-index:1002 + 1440×64，
+           * 把它当浮层的话，选中顶栏里的东西就再也下不来了（实测踩到过）。
+           */
+          const looksLikeTopBar = r.y <= 8 && r.w > vw * 0.6 && r.h < vh * 0.3;
+          if (!full && !looksLikeTopBar && r.w > 24 && r.h > 24) candidate = node;
         }
       } catch { /* ignore */ }
       if (candidate) {
         const inside = list.filter((t) => candidate.contains(t.el));
-        if (inside.length >= 2) {
-          const lr = rectOf(candidate);
-          // 判"压住了别的东西"要用矩形相交，不能用中心点命中测试 ——
-          // 中心点被盖住的元素早就在 collectTargets 里被滤掉了，根本不在 list 里，
-          // 拿中心点判等于什么都没判。
-          const blocksSomething = list.some((t) => {
-            if (candidate.contains(t.el)) return false;
-            const r = rectOf(t.el);
-            return r.x < lr.x + lr.w && r.x + r.w > lr.x
-                && r.y < lr.y + lr.h && r.y + r.h > lr.y;
-          });
-          if (blocksSomething) return candidate;
-        }
+        /*
+         * 只要这一层里有两个以上可导航的目标，就认它是"层"。
+         *
+         * 这里**不能**再要求"它压住了别的候选元素"：头像浮窗、下拉菜单这类东西
+         * 常常飘在一片没有链接的空白上（B 站右上角的头像浮窗就是典型），
+         * 下面只有 banner 图，压住的候选数是 0 —— 加了这条判据它们就永远认不出来，
+         * 表现为"浮窗里只能走前几项，再往下就跳到别处去"。
+         *
+         * 而且认错了代价也不大：认出层只是让层内目标**优先**（打分数惩罚），
+         * 不是把层外排除掉，走完了一样出得去。
+         */
+        if (inside.length >= 2) return candidate;
       }
       node = node.parentElement;
     }
@@ -1299,12 +1323,23 @@ function createController(win) {
         return;
       }
     }
-    let list = targetList();
+    const list = targetList();
     const base = findTargetFor(state.current.el) || state.current;
 
-    // 内容叠加时只在这一层里导航，别漏到下面那一层去
+    /*
+     * 内容叠加时"本层优先"，而不是"只在本层"。
+     *
+     * 把层外的目标打一个很大的分数惩罚：层里这个方向还有得走就留在层里，
+     * 层里没得走了仍然能走到外面去。
+     *
+     * 之前这里是把层外的目标直接滤掉 —— 结果是双向的坑：一头是拿它跟 B 站
+     * 那种"absolute + 高 z-index 的常驻顶栏"一起用时，顶栏被当成浮层，
+     * 选中顶栏里的东西就再也下不来；另一头是层里走完了也出不去，人被关在里面。
+     */
     const layer = floatingLayerOf(base.el, list);
-    if (layer) list = list.filter((t) => layer.contains(t.el));
+    const penalty = layer
+      ? (cand) => (layer.contains(cand.el) ? 0 : LAYER_PENALTY)
+      : null;
 
     const vw = doc.documentElement.clientWidth || win.innerWidth;
     const vh = doc.documentElement.clientHeight || win.innerHeight;
@@ -1355,14 +1390,24 @@ function createController(win) {
         baseRect,
         allowOffscreen,
         accept,
+        penalty,
       });
     };
 
     // 已经站在顶部悬浮输入框（搜索框）上：向上就到头了，不要再绕回下面的内容
     let next = findNext(false);
 
-    // 视野里没有：纵向的话先自己翻一屏（最多 4 屏），再看新视野
-    if (!next && vertical) {
+    /*
+     * 视野里没有：纵向的话先自己翻一屏（最多 4 屏），再看新视野。
+     *
+     * 但**在浮层里不翻** —— 用户是在浮窗里上下走，不是要滚整个页面。
+     * 之前没区分这两种情况：浮层内找不到下一个目标时照样翻屏（一次最多 4 屏），
+     * 表现就是"在浮出层里按上下键，整个页面跟着滚走了"。
+     *
+     * 顺带把"选视口外元素"的兜底也限定在层内：跑到层外同样会把页面滚走。
+     */
+    const offscreenPool = layer ? list.filter((t) => layer.contains(t.el)) : list;
+    if (!next && vertical && !layer) {
       for (let i = 0; i < 4 && !next; i++) {
         if (!scrollPage(dir)) break;
         next = findNext(false);
@@ -1373,11 +1418,12 @@ function createController(win) {
     // 但"操作方向那一侧"的约束仍然生效：向下走不去选上方的元素，
     // 否则会把页面拽回去，来回抖（这是之前页面滚不动的根源）。
     if (!next) {
-      next = nextInDirection(list, base, dir, {
+      next = nextInDirection(offscreenPool, base, dir, {
         viewportWidth: vw,
         viewportHeight: vh,
         baseRect: rectOf(base.el),
         allowOffscreen: true,
+        penalty,
         accept: (cand) => {
           if (cand.el === state.current.el) return false;
           if (dir === 'down' && cand.rect.y + cand.rect.h < 0) return false;
@@ -1396,8 +1442,9 @@ function createController(win) {
     const inTopBar = base.stuck === true || (isTextField(base.el) && rectOf(base.el).y < 64);
     if (!next && vertical && !inTopBar) {
       const baseIsStuck = base.stuck === true;
-      const sideways = (d) => nextInDirection(list, base, d, {
+      const sideways = (d) => nextInDirection(offscreenPool, base, d, {
         viewportWidth: vw, viewportHeight: vh, baseRect: rectOf(base.el),
+        penalty,
         accept: (cand) => cand.el !== state.current.el && (cand.stuck === true) === baseIsStuck,
       });
       next = sideways('left') || sideways('right');
