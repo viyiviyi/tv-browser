@@ -1,5 +1,7 @@
 # tv-browser — 电视上的浏览器
 
+**简体中文** | [English](README.en.md)
+
 一个给 Android TV / 电视盒子 / 投影用的 WebView 浏览器：**遥控器的上、下、左、右、确定、返回**就能逛网页。
 
 它把 [bili-keynav](https://github.com/viyiviyi/bili-keynav) 那套空间导航脚本注入到网页里，
