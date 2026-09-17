@@ -91,6 +91,7 @@ $env:NODE_PATH="C:\nvm4w\nodejs\node_modules"; node tools\preview.mjs
 | 能看视频 | 播放器容器选择器补上了通用 `<video>`，所以视频窗口也能被方向键选中：确定 = 播放/暂停，双击 = 全屏；全屏时方向键交还播放器 |
 | 关得掉弹层 | 引擎里那份 B 站专属的关弹层逻辑在别的网站上是空转的，桥接层另配了一份通用兜底：盖住一大半屏幕、又能找到"关闭/取消"按钮的浮层才会被关，找不到就不动手 |
 | 触屏也能用 | **手指长按 = 鼠标悬停**。触屏上本来没有 hover 这回事，而不少电脑版页面的操作（"立即播放"浮层、下拉菜单、卡片上的小按钮）就藏在 CSS `:hover` 里 —— 长按会把"鼠标"停到手指按住的位置，把那些东西叫出来 |
+| 叠加内容时不乱跳 | 方向键会先看当前选中项在**哪一层**：如果它在浮层里（下拉菜单、悬浮面板），这一步就只在这一层里走，不会"漏"到下面那一层去 —— 哪怕下面那个元素在几何上更近。判据要求这一层确实压住了别的内容、而且它里面还有得走；宁可漏判也不误判（误判会把人困在浮层里出不来） |
 
 按键行为：
 
@@ -257,7 +258,7 @@ node test\core.test.mjs                                        # 23 项：导航
 # 这个仓库自己这一层
 cd ..\tv-browser
 powershell -File tools\build.ps1 -Test                          # 75 项：JVM 单元测试
-$env:NODE_PATH="C:\nvm4w\nodejs\node_modules"; node test\bridge.mjs  # 39 项：遥控器桥在 Chromium 里的契约
+$env:NODE_PATH="C:\nvm4w\nodejs\node_modules"; node test\bridge.mjs  # 46 项：遥控器桥在 Chromium 里的契约
 $env:NODE_PATH="C:\nvm4w\nodejs\node_modules"; node test\home.mjs    # 86 项：首屏在 Chromium 里的行为与版面
 ```
 

@@ -1232,6 +1232,59 @@ function createController(win) {
     if (outside) scrollIntoView(target);
   }
 
+  /**
+   * 当前选中项所在的"浮层"（如果有的话）。
+   *
+   * 页面有内容叠加时（下拉菜单、悬浮面板、弹层），方向键会从浮层里"漏"到下面那一层 ——
+   * 哪怕浮层里还有没走完的选项。因为候选集是把整页的元素放在一起按几何算的，
+   * 浮层里那几个按钮在距离上未必比下面那些内容更近，于是就被抢走了。
+   *
+   * 判据（宁可漏判也不误判：误判会把人困在浮层里出不来）：
+   *   1. 从选中项往上找，position 是 fixed/absolute 且 z-index 有明确数值的祖先
+   *   2. 它不能铺满整个视口（铺满的那种是遮罩或整页容器，不算"浮层"）
+   *   3. 它里面至少有两个可导航目标（只有一个的话，那一步本来就该走出去）
+   *   4. 它确实盖住了外面的目标（用命中测试验，不靠猜）
+   *
+   * 四条都满足才认定，然后把这一步的导航限制在这一层里面。
+   */
+  function floatingLayerOf(el, list) {
+    if (!el) return null;
+    const vw = doc.documentElement.clientWidth || win.innerWidth;
+    const vh = doc.documentElement.clientHeight || win.innerHeight;
+    let node = el.parentElement;
+    for (let i = 0; node && i < 12; i++) {
+      let candidate = null;
+      try {
+        const cs = win.getComputedStyle(node);
+        const z = cs.zIndex;
+        const hasZ = z && z !== 'auto' && parseInt(z, 10) > 0;
+        if ((cs.position === 'fixed' || cs.position === 'absolute') && hasZ) {
+          const r = rectOf(node);
+          const full = r.w >= vw * 0.95 && r.h >= vh * 0.95;
+          if (!full && r.w > 24 && r.h > 24) candidate = node;
+        }
+      } catch { /* ignore */ }
+      if (candidate) {
+        const inside = list.filter((t) => candidate.contains(t.el));
+        if (inside.length >= 2) {
+          const lr = rectOf(candidate);
+          // 判"压住了别的东西"要用矩形相交，不能用中心点命中测试 ——
+          // 中心点被盖住的元素早就在 collectTargets 里被滤掉了，根本不在 list 里，
+          // 拿中心点判等于什么都没判。
+          const blocksSomething = list.some((t) => {
+            if (candidate.contains(t.el)) return false;
+            const r = rectOf(t.el);
+            return r.x < lr.x + lr.w && r.x + r.w > lr.x
+                && r.y < lr.y + lr.h && r.y + r.h > lr.y;
+          });
+          if (blocksSomething) return candidate;
+        }
+      }
+      node = node.parentElement;
+    }
+    return null;
+  }
+
   function move(dir) {
     if (!state.current) {
       // 上一次被返回键取消掉的选中项还在：从它那儿接着走，
@@ -1246,8 +1299,13 @@ function createController(win) {
         return;
       }
     }
-    const list = targetList();
+    let list = targetList();
     const base = findTargetFor(state.current.el) || state.current;
+
+    // 内容叠加时只在这一层里导航，别漏到下面那一层去
+    const layer = floatingLayerOf(base.el, list);
+    if (layer) list = list.filter((t) => layer.contains(t.el));
+
     const vw = doc.documentElement.clientWidth || win.innerWidth;
     const vh = doc.documentElement.clientHeight || win.innerHeight;
     const vertical = dir === 'down' || dir === 'up';

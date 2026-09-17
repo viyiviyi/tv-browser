@@ -90,9 +90,34 @@ const OVERLAY_HTML = `<!doctype html><html lang="zh"><head><meta charset="utf-8"
 const TARGET_HTML = `<!doctype html><html><head><meta charset="utf-8"><title>到了</title></head>
 <body style="background:#111;color:#eee;font-family:sans-serif"><h1 id="arrived">目标页</h1></body></html>`;
 
+/**
+ * 一个只占屏幕一角的下拉菜单，压在一大块页面内容上 ——
+ * 用来验"方向键不该从菜单漏到下面那一层"。
+ *
+ * 关键在几处尺寸：菜单项之间留了 24px 间距，而 page1 又高又大、中心点露在菜单
+ * 外面（所以它不会被 collectTargets 当成"被完全遮住"滤掉）。这样一来，从菜单项一
+ * 按 ↓ 时，page1 在几何上比菜单项二更近 —— 正是要修的那个"漏到下一层"。
+ */
+const DROPDOWN_HTML = `<!doctype html><html lang="zh"><head><meta charset="utf-8">
+<title>下拉菜单</title><style>${PAGE_CSS}
+  #menu { position:absolute; top:40px; left:24px; width:320px; z-index:50;
+      background:#22262e; border:1px solid #3b3d44; border-radius:10px; padding:8px; }
+  #menu a { display:block; margin:0 0 24px; width:auto; padding:14px 16px;
+      color:#fff; text-decoration:none; border-radius:8px; }
+  #page1 { height:600px; }
+</style></head><body>
+  <a class="card" id="page1" href="#">页面内容（很高，被菜单压住一半）</a>
+  <div id="menu">
+    <a id="m1" href="#">菜单项一</a>
+    <a id="m2" href="#">菜单项二</a>
+    <a id="m3" href="#">菜单项三</a>
+  </div>
+</body></html>`;
+
 const ROUTES = {
   '/': ['text/html; charset=utf-8', PAGE_HTML],
   '/overlay': ['text/html; charset=utf-8', OVERLAY_HTML],
+  '/dropdown': ['text/html; charset=utf-8', DROPDOWN_HTML],
   '/target': ['text/html; charset=utf-8', TARGET_HTML],
   '/keynav-web.js': ['application/javascript; charset=utf-8', KEYNAV_WEB],
   '/early.js': ['application/javascript; charset=utf-8', EARLY_JS],
@@ -396,6 +421,54 @@ try {
 
     const handled = await key(page, 'right');
     check('输入框里按方向键仍然返回 true（合成键盘事件发过去了）', handled === true, String(handled));
+    await page.close();
+  }
+
+  /* ------------------------------------------ 内容叠加时留在本层 -- */
+  {
+    const page = await browser.newPage({ viewport: { width: 960, height: 540 } });
+    await boot(page, `${BASE}/dropdown`);
+
+    const selectId = (id) => page.evaluate((wanted) => {
+      const list = window.__kb.refresh();
+      const i = list.findIndex((t) => t.el && t.el.id === wanted);
+      if (i < 0) return -1;
+      window.__kb.selectAt(i);
+      return i;
+    }, id);
+    const currentId = () => page.evaluate(() =>
+      window.__kb.state.current && window.__kb.state.current.el.id);
+
+    check('能选中下拉菜单里的项', (await selectId('m1')) >= 0);
+    check('起点是菜单项一', (await currentId()) === 'm1', await currentId());
+
+    await key(page, 'down');
+    check('按 ↓ 走菜单项二，没有漏到下面那层页面内容',
+      (await currentId()) === 'm2', `现在在 ${await currentId()}`);
+
+    await key(page, 'down');
+    check('再按 ↓ 走菜单项三', (await currentId()) === 'm3', `现在在 ${await currentId()}`);
+
+    await key(page, 'down');
+    check('菜单走到底也留在菜单里（不会莫名跳到页面内容）',
+      (await currentId()) === 'm3', `现在在 ${await currentId()}`);
+
+    await key(page, 'up');
+    check('按 ↑ 能往回走', (await currentId()) === 'm2', `现在在 ${await currentId()}`);
+    await page.close();
+  }
+
+  {
+    // 对照：没有叠加内容时，方向键该照常跨区域走，不能因为加了"层"的判断就困住
+    const page = await browser.newPage({ viewport: { width: 960, height: 540 } });
+    await boot(page);
+
+    await key(page, 'down');
+    const first = await page.evaluate(() => window.__kb.currentLabel());
+    await key(page, 'down');
+    const second = await page.evaluate(() => window.__kb.currentLabel());
+    check('普通页面里方向键照旧换目标（层判断没有误伤）', first !== second,
+      `${first} → ${second}`);
     await page.close();
   }
 

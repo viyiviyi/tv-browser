@@ -91,6 +91,7 @@ $env:NODE_PATH="C:\nvm4w\nodejs\node_modules"; node tools\preview.mjs
 | Can watch video | The player container selectors gained the generic `<video>`, so a video window can be selected with the D-pad too: OK = play/pause, double press = fullscreen; in fullscreen the D-pad goes back to the player |
 | Overlays can be closed | The Bilibili-specific overlay-closing logic in the engine is a no-op on other sites, so the bridge layer has its own generic fallback: only an overlay that covers more than half the screen and has a findable "close/cancel" button gets closed, and if none is found it does nothing |
 | Works on a touchscreen too | **A long press with your finger = a mouse hover.** Touchscreens have no hover at all, and a fair number of desktop pages hide their controls in CSS `:hover` (the "play now" overlay, dropdown menus, the little buttons on a card) — a long press parks the "mouse" where your finger is and brings those out |
+| Stays on the layer you're on | The D-pad first works out **which layer** the selected item is on: if it's inside a floating layer (a dropdown, a floating panel), this press only moves within that layer and won't leak down to the content underneath — even when that content is geometrically closer. The layer has to genuinely cover something else and still have somewhere to go; it would rather miss a layer than guess wrong (guessing wrong would trap you inside one) |
 
 Key behaviour:
 
@@ -257,7 +258,7 @@ node test\core.test.mjs                                        # 23 items: navig
 # this repository's own layer
 cd ..\tv-browser
 powershell -File tools\build.ps1 -Test                          # 75 items: JVM unit tests
-$env:NODE_PATH="C:\nvm4w\nodejs\node_modules"; node test\bridge.mjs  # 39 items: the remote-control bridge contract in Chromium
+$env:NODE_PATH="C:\nvm4w\nodejs\node_modules"; node test\bridge.mjs  # 46 items: the remote-control bridge contract in Chromium
 $env:NODE_PATH="C:\nvm4w\nodejs\node_modules"; node test\home.mjs    # 86 items: home screen behaviour and layout in Chromium
 ```
 
