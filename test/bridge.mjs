@@ -151,11 +151,44 @@ const TOPBAR_HTML = `<!doctype html><html lang="zh"><head><meta charset="utf-8">
   <div style="height:2000px;"></div>
 </body></html>`;
 
+/**
+ * 浮窗和触发它的按钮是**兄弟**，不是父子 —— 复刻 B 站「下载客户端 / 头像」那种结构。
+ *
+ * 这是之前漏掉的一种：floatingLayerOf 只从选中项往上找祖先，兄弟浮窗永远找不到，
+ * 于是浮层优先整个失效，浮窗里的按钮被 banner 抢走（banner 在几何上离按钮更近）。
+ */
+const SIBLING_HTML = `<!doctype html><html lang="zh"><head><meta charset="utf-8">
+<title>按钮与兄弟浮窗</title><style>${PAGE_CSS}
+  #banner { position:absolute; top:0; left:0; width:100%; height:155px; display:block; }
+  #bar { position:absolute; top:0; left:0; width:100%; height:64px; z-index:1002;
+      display:flex; align-items:center; padding:0 16px; box-sizing:border-box; }
+  #bar a { width:auto; margin:0 8px 0 0; padding:12px 16px; }
+  /* 按钮要撑满顶栏高度（B 站就是这样），否则"按钮正下方"那个探测点会落在空档里 */
+  #dl { margin-left:380px; align-self:stretch; display:flex; align-items:center; }
+  /* 浮窗和 #dl 是兄弟，一起放在 #bar 里面。
+     顶部留 140px 不可点的区域（B 站那里是二维码/标题），
+     这样里面的按钮离顶栏按钮足够远，banner 才抢得走 —— 少这一段就复现不出来。 */
+  #pop { position:absolute; top:64px; left:323px; width:387px; height:222px; z-index:1;
+      padding:140px 8px 8px; box-sizing:border-box;
+      background:#2a2f3a; border:1px solid #3b3d44; }
+  #pop a { display:block; width:auto; margin:0 0 8px; padding:12px 14px; }
+</style></head><body>
+  <a id="banner" href="#"><span style="display:block;height:155px"></span></a>
+  <div id="bar">
+    <a id="dl" href="#">下载客户端</a>
+    <div id="pop">
+      <a id="q1" href="#">立即下载</a>
+      <a id="q2" href="#">查看更多下载内容</a>
+    </div>
+  </div>
+</body></html>`;
+
 const ROUTES = {
   '/': ['text/html; charset=utf-8', PAGE_HTML],
   '/overlay': ['text/html; charset=utf-8', OVERLAY_HTML],
   '/dropdown': ['text/html; charset=utf-8', DROPDOWN_HTML],
   '/topbar': ['text/html; charset=utf-8', TOPBAR_HTML],
+  '/sibling': ['text/html; charset=utf-8', SIBLING_HTML],
   '/target': ['text/html; charset=utf-8', TARGET_HTML],
   '/keynav-web.js': ['application/javascript; charset=utf-8', KEYNAV_WEB],
   '/early.js': ['application/javascript; charset=utf-8', EARLY_JS],
@@ -574,6 +607,68 @@ try {
     const second = await page.evaluate(() => window.__kb.currentLabel());
     check('普通页面里方向键照旧换目标（层判断没有误伤）', first !== second,
       `${first} → ${second}`);
+    await page.close();
+  }
+
+  /* ---------------------- 浮窗和触发按钮是兄弟（B 站下载客户端那种）-- */
+  {
+    // 视口必须用 1440×900：B 站的 banner 是全宽的，它的中心点要落在浮窗**外面**
+    // 才会留在候选集里、才谈得上"把浮窗里的按钮抢走"。960 宽时中心点正好被浮窗盖住，
+    // 上游就把它滤掉了，这个用例会变成永远通过（踩过一次）。
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await boot(page, `${BASE}/sibling`);
+
+    const selectId = (id) => page.evaluate((wanted) => {
+      const list = window.__kb.refresh();
+      const i = list.findIndex((t) => t.el && t.el.id === wanted);
+      if (i < 0) return -1;
+      window.__kb.selectAt(i);
+      return i;
+    }, id);
+    const currentId = () => page.evaluate(() =>
+      window.__kb.state.current && window.__kb.state.current.el.id);
+
+    check('能选中顶栏里的「下载客户端」', (await selectId('dl')) >= 0);
+
+    // 临时调试：把几个元素的层级分和几何量出来
+    const dbg = await page.evaluate(() => {
+      const rank = (el) => {
+        let r = 0, node = el;
+        for (let i = 0; node && i < 20; i++) {
+          const cs = getComputedStyle(node);
+          const z = parseInt(cs.zIndex, 10);
+          if (cs.position === 'fixed' || cs.position === 'absolute') {
+            r += 1000 + (Number.isFinite(z) ? Math.max(0, Math.min(z, 900)) : 0);
+          } else if (cs.position === 'relative' || cs.position === 'sticky') { r += 100; }
+          node = node.parentElement;
+        }
+        return r;
+      };
+      const box = (id) => {
+        const b = document.getElementById(id).getBoundingClientRect();
+        return [Math.round(b.left), Math.round(b.top), Math.round(b.width), Math.round(b.height)];
+      };
+      const list = window.__kb.refresh();
+      return {
+        rank: { dl: rank(document.getElementById('dl')), q1: rank(document.getElementById('q1')), banner: rank(document.getElementById('banner')) },
+        box: { dl: box('dl'), q1: box('q1'), q2: box('q2'), banner: box('banner'), pop: box('pop') },
+        candRanks: list.slice(0, 12).map((t) => `${t.el.id || t.el.tagName}:${t.rank}`),
+      };
+    });
+    console.log('   [调试] ' + JSON.stringify(dbg));
+
+    await key(page, 'down');
+    const first = await currentId();
+    check('从按钮往下走，进的是它弹出来的兄弟浮窗（不是被 banner 抢走）',
+      first === 'q1', `现在在 ${first}`);
+
+    await key(page, 'down');
+    const second = await currentId();
+    check('浮窗里能继续往下走', second === 'q2', `现在在 ${second}`);
+
+    await key(page, 'up');
+    const back = await currentId();
+    check('按 ↑ 能回到浮窗第一项', back === 'q1', `现在在 ${back}`);
     await page.close();
   }
 

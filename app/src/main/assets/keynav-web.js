@@ -455,7 +455,16 @@ function findNeighbour(targets, base, dir, opts = {}) {
     const score = s.score + extra;
     const entry = { ...s, score, target: cand };
     if (!best || score < best.score) best = entry;
-    if (s.aligned && (!bestAligned || score < bestAligned.score)) bestAligned = entry;
+    /*
+     * "整行/整列优先"只对**没被层级惩罚**的候选生效。
+     *
+     * 否则会出现这种情况：同页的 banner 占满整幅宽、和当前选中项横向对齐，
+     * 浮窗里那几个按钮窄、不对齐 —— 于是 bestAligned 直接选中 banner，
+     * 层级惩罚白加了。实测过：B 站下载浮窗那个 banner 被罚了 900000 还是被选中。
+     *
+     * 语义上也说得通："整行优先"是同一层内的几何优化，跨层比的时候不该拿它压人。
+     */
+    if (s.aligned && extra === 0 && (!bestAligned || score < bestAligned.score)) bestAligned = entry;
   }
   /*
    * 整行/整列优先：只要"同一行里右边还有东西"，就选它。
@@ -769,12 +778,56 @@ function createController(win) {
 
   const invalidate = () => { dirty = true; };
 
+  /**
+   * 一个元素的"层叠层级"：数值越大，说明它浮在越上面。
+   *
+   * 沿祖先链累加：
+   *   fixed / absolute 的祖先 —— 一大截（z-index 有明确数值就再加上它，封顶 900）
+   *   relative / sticky 的祖先 —— 一小截
+   *   一路都没沾上的，就是文档流里的普通元素，层级 0
+   *
+   * 拿它做"同层优先"：导航时优先去和当前选中项层级相近的目标，别一层一层乱窜。
+   *
+   * 为什么不是"从选中项往上找浮层祖先"：浮窗和触发它的按钮常常是**兄弟**而不是
+   * 父子 —— B 站的下载浮窗、头像浮窗都是这样，往上找永远找不到那个浮窗，
+   * 于是浮层优先整个失效，浮窗里的按钮被别的元素抢走。改成给每个候选各算一个
+   * 层级分之后，就不依赖 DOM 关系了，谁在上面一目了然。
+   */
+  function stackRank(el) {
+    let rank = 0;
+    let node = el;
+    for (let i = 0; node && i < 20; i++) {
+      let pos = '';
+      let z = NaN;
+      try {
+        const cs = win.getComputedStyle(node);
+        pos = cs.position || '';
+        z = parseInt(cs.zIndex, 10);
+      } catch { /* ignore */ }
+      if (pos === 'fixed' || pos === 'absolute') {
+        rank += 1000 + (Number.isFinite(z) ? Math.max(0, Math.min(z, 900)) : 0);
+      } else if (pos === 'relative' || pos === 'sticky') {
+        rank += 100;
+      }
+      node = node.parentElement;
+    }
+    return rank;
+  }
+
+  /** 层级的缓存：挂在候选对象上，收集时算一次就够（它只取决于祖先的 position/z-index） */
+  function rankOf(target) {
+    if (!target) return 0;
+    if (typeof target.rank !== 'number') target.rank = stackRank(target.el);
+    return target.rank;
+  }
+
   function targetList(force) {
     const now = Date.now();
     const needCollect = force || dirty || !state.targets || now - state.targetsAt > 800;
     if (needCollect) {
       markPlayerTarget(doc);          // 视频窗口也要能被选中
       state.targets = collectTargets(doc, { minArea: SETTINGS.minArea });
+      for (const t of state.targets) t.rank = stackRank(t.el);
       state.targetsAt = now;
       dirty = false;
       state.rectsAt = now;
@@ -1251,62 +1304,24 @@ function createController(win) {
   const LAYER_PENALTY = 1e6;
 
   /**
-   * 当前选中项所在的"浮层"（如果有的话）。
+   * "层级高的优先"：只惩罚那些**比当前选中项层级更低**的候选，层级相同或更高的不管。
    *
-   * 页面有内容叠加时（下拉菜单、悬浮面板、弹层），方向键会从浮层里"漏"到下面那一层 ——
-   * 哪怕浮层里还有没走完的选项。因为候选集是把整页的元素放在一起按几何算的，
-   * 浮层里那几个按钮在距离上未必比下面那些内容更近，于是就被抢走了。
+   * 这样：
+   *   - 从顶栏按钮往下走时，按钮弹出来的浮窗（层级更高）不会被同页的 banner（层级更低）抢走；
+   *   - 浮窗里走完了，下面的内容虽然层级低、会被罚，但它是唯一的候选，照样去得了（惩罚不是排除）；
+   *   - 文档流内部大家都是 0，纯比几何距离，跟以前一样。
    *
-   * 判据（宁可漏判也不误判：误判的代价是把人挡在层外或关在层里，两次都踩过）：
-   *   1. 从选中项往上找，position 是 fixed/absolute 且 z-index 有明确数值的祖先
-   *   2. 它不能铺满整个视口（铺满的那种是遮罩或整页容器，不算"浮层"）
-   *   3. 它不能是"贴在视口顶部的常驻横条"（B 站顶栏就长这样，它不是浮层）
-   *   4. 它里面至少有两个可导航目标（只有一个的话，那一步本来就该走出去）
-   *   5. 它确实压住了外面的目标（用矩形相交验，不靠猜）
-   *
-   * 都满足才认定成"层"，而且只是让层内目标优先，不是把层外排除掉。
+   * 一开始我写成"层级差越小越优先"，那是错的：从顶栏按钮出发，浮窗（更高）和 banner（更低）
+   * 的差值差不多大，结果 banner 反而因为"差得少"被选中。
    */
-  function floatingLayerOf(el, list) {
-    if (!el) return null;
-    const vw = doc.documentElement.clientWidth || win.innerWidth;
-    const vh = doc.documentElement.clientHeight || win.innerHeight;
-    let node = el.parentElement;
-    for (let i = 0; node && i < 12; i++) {
-      let candidate = null;
-      try {
-        const cs = win.getComputedStyle(node);
-        const z = cs.zIndex;
-        const hasZ = z && z !== 'auto' && parseInt(z, 10) > 0;
-        if ((cs.position === 'fixed' || cs.position === 'absolute') && hasZ) {
-          const r = rectOf(node);
-          const full = r.w >= vw * 0.95 && r.h >= vh * 0.95;
-          /*
-           * 贴在视口顶部、又宽又扁的，是顶栏/工具条这种常驻的条，不是浮层。
-           * B 站的 .bili-header__bar 正是 absolute + z-index:1002 + 1440×64，
-           * 把它当浮层的话，选中顶栏里的东西就再也下不来了（实测踩到过）。
-           */
-          const looksLikeTopBar = r.y <= 8 && r.w > vw * 0.6 && r.h < vh * 0.3;
-          if (!full && !looksLikeTopBar && r.w > 24 && r.h > 24) candidate = node;
-        }
-      } catch { /* ignore */ }
-      if (candidate) {
-        const inside = list.filter((t) => candidate.contains(t.el));
-        /*
-         * 只要这一层里有两个以上可导航的目标，就认它是"层"。
-         *
-         * 这里**不能**再要求"它压住了别的候选元素"：头像浮窗、下拉菜单这类东西
-         * 常常飘在一片没有链接的空白上（B 站右上角的头像浮窗就是典型），
-         * 下面只有 banner 图，压住的候选数是 0 —— 加了这条判据它们就永远认不出来，
-         * 表现为"浮窗里只能走前几项，再往下就跳到别处去"。
-         *
-         * 而且认错了代价也不大：认出层只是让层内目标**优先**（打分数惩罚），
-         * 不是把层外排除掉，走完了一样出得去。
-         */
-        if (inside.length >= 2) return candidate;
-      }
-      node = node.parentElement;
-    }
-    return null;
+  function layerPenalty(base) {
+    const baseRank = rankOf(base);
+    return (cand) => {
+      const dr = rankOf(cand) - baseRank;
+      if (dr >= 0) return 0;
+      // 只按"低了多少"计惩罚，每一千分算一档，最多 4 档
+      return LAYER_PENALTY * Math.min(-dr / 1000, 4);
+    };
   }
 
   function move(dir) {
@@ -1327,19 +1342,17 @@ function createController(win) {
     const base = findTargetFor(state.current.el) || state.current;
 
     /*
-     * 内容叠加时"本层优先"，而不是"只在本层"。
+     * 内容叠加时"同层优先"，而不是"只在本层"。
      *
-     * 把层外的目标打一个很大的分数惩罚：层里这个方向还有得走就留在层里，
-     * 层里没得走了仍然能走到外面去。
+     * 每个候选按它和当前选中项的**层级差**打一个分数惩罚（见 layerPenalty）：
+     * 同一层里直接比几何距离，层差越大排得越后。这样层里还有得走就留在层里，
+     * 层里走完了也仍然出得去，两头都不会卡。
      *
-     * 之前这里是把层外的目标直接滤掉 —— 结果是双向的坑：一头是拿它跟 B 站
-     * 那种"absolute + 高 z-index 的常驻顶栏"一起用时，顶栏被当成浮层，
-     * 选中顶栏里的东西就再也下不来；另一头是层里走完了也出不去，人被关在里面。
+     * 之前这里是把层外的目标直接滤掉 —— 结果是双向的坑：一头是层里走完了出不去，
+     * 人被关在里面；另一头是层内找不到下一个目标时会去"翻一屏"，把整个页面滚走。
      */
-    const layer = floatingLayerOf(base.el, list);
-    const penalty = layer
-      ? (cand) => (layer.contains(cand.el) ? 0 : LAYER_PENALTY)
-      : null;
+    const baseRank = rankOf(base);
+    const penalty = layerPenalty(base);
 
     const vw = doc.documentElement.clientWidth || win.innerWidth;
     const vh = doc.documentElement.clientHeight || win.innerHeight;
@@ -1406,8 +1419,8 @@ function createController(win) {
      *
      * 顺带把"选视口外元素"的兜底也限定在层内：跑到层外同样会把页面滚走。
      */
-    const offscreenPool = layer ? list.filter((t) => layer.contains(t.el)) : list;
-    if (!next && vertical && !layer) {
+    const offscreenPool = baseRank > 0 ? list.filter((t) => rankOf(t) > 0) : list;
+    if (!next && vertical && baseRank === 0) {
       for (let i = 0; i < 4 && !next; i++) {
         if (!scrollPage(dir)) break;
         next = findNext(false);
