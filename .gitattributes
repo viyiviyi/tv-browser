@@ -1,0 +1,11 @@
+# 仓库里统一按 LF 存，避免 Windows 的 core.autocrlf 把生成物（keynav-web.js 之类）
+# 改来改去，每次构建都冒出一堆假 diff。
+* text=auto eol=lf
+
+# 二进制，不要做任何换行转换
+*.png binary
+*.jpg binary
+*.apk binary
+*.jar binary
+*.keystore binary
+*.zip binary

@@ -1,0 +1,24 @@
+# 构建产物
+.gradle/
+build/
+app/build/
+*.log
+
+# 本机路径：sdk.dir 因机器而异，不进仓库
+local.properties
+
+# 构建工具链（JDK/Gradle/Android SDK，500MB+）。
+# 注意它常常是指向相邻工程缓存目录的目录联接（junction），
+# 所以这里同时写带斜杠和不带斜杠两种形式。
+tools-cache/
+tools-cache
+tools-cache.lnk
+
+# Android Studio / IDEA
+.idea/
+*.iml
+captures/
+
+# 系统杂项
+.DS_Store
+Thumbs.db

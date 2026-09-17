@@ -1,0 +1,82 @@
+// 电视机上的浏览器：遥控器六键操作，首屏是搜索框 + 收藏 + 最近打开
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.dsh.tvbrowser'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'com.dsh.tvbrowser'
+        minSdk 21
+        targetSdk 34
+        versionCode 1
+        versionName '1.0.0'
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    signingConfigs {
+        // 自签名：第一次构建时由 tools/build.ps1 用 keytool 生成，
+        // 这样 release 包也能直接 sideload 到电视上。
+        local {
+            def ks = rootProject.file('tools-cache/tvbrowser.keystore')
+            if (ks.exists()) {
+                storeFile ks
+                storePassword 'tvbrowser2024'
+                keyAlias 'tvbrowser'
+                keyPassword 'tvbrowser2024'
+            }
+        }
+    }
+
+    buildTypes {
+        debug {
+            applicationIdSuffix '.debug'
+        }
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.local
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+
+    testOptions {
+        unitTests {
+            // Robolectric 需要能读到 assets/res
+            includeAndroidResources = true
+            returnDefaultValues = true
+            all {
+                // Robolectric 默认去 Maven Central 下 android-all 包，这里直连不通，
+                // 指向阿里云镜像（本机可访问）
+                systemProperty 'robolectric.dependency.repo.url', 'https://maven.aliyun.com/repository/public'
+                systemProperty 'robolectric.dependency.repo.id', 'aliyun'
+                systemProperty 'robolectric.logging.enabled', 'false'
+            }
+        }
+    }
+
+    packaging {
+        resources.excludes += ['META-INF/*', 'DebugProbesKt.bin']
+    }
+}
+
+dependencies {
+    testImplementation 'junit:junit:4.13.2'
+    // 在 JVM 上跑真实的 Android 类（WebView/WebSettings/Activity 都有 shadow 实现），
+    // 这样"UA 伪装、多窗口开启、脚本注入、按键转发"这些胶水代码也能被自动化验证，
+    // 不用真机或模拟器。
+    testImplementation 'org.robolectric:robolectric:4.12.2'
+}

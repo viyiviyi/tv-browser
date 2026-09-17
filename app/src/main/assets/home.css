@@ -1,0 +1,313 @@
+/*!
+ * 电视浏览器 — 首屏样式
+ *
+ * 版面（从上到下）：收藏 → 搜索框 → 最近打开。
+ *
+ * 尺寸全部挂在 --cell / --gap 这两个变量上，由 home.js 按屏幕宽高算好塞进来：
+ * 电视的逻辑分辨率差异很大（1080p 常见 960×540，也有 1920×1080），
+ * 写死像素会在一半的机器上挤成一团。
+ */
+
+:root {
+  --cell: 104px;          /* 一个图标的格子宽度（含名称区） */
+  --gap: 18px;            /* 格子之间的间隔 */
+  --radius: 16px;
+  --bg: #0e1015;
+  --card: #181c25;
+  --card-hi: #232936;
+  --text: #e9edf5;
+  --dim: #8b94a7;
+  --line: #262c39;
+  --accent: #4b8cff;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+  overflow-x: hidden;
+}
+
+body {
+  /* 一点点中心亮起来的渐变，纯黑在电视上太死板 */
+  background:
+    radial-gradient(120% 80% at 50% 0%, #191e2a 0%, rgba(14, 16, 21, 0) 60%),
+    var(--bg);
+}
+
+/* ------------------------------------------------------------ 版面骨架 -- */
+
+.page {
+  width: 100%;
+  padding: 2.4vh 0 1.6vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.block {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.block-title {
+  font-size: var(--title-size, 18px);
+  font-weight: 600;
+  letter-spacing: 1px;
+  color: var(--dim);
+  margin-bottom: calc(var(--gap) * 0.6);
+}
+
+.grid {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-content: flex-start;
+  gap: var(--gap);
+  /* 一行最多几个由 home.js 算好，这里只是把内容居中摆开 */
+  max-width: 100%;
+}
+
+.empty {
+  margin: calc(var(--gap) * 0.8) 0 0;
+  font-size: 15px;
+  color: var(--dim);
+  text-align: center;
+  line-height: 1.7;
+}
+
+/* -------------------------------------------------------------- 卡片 -- */
+
+.site {
+  width: var(--cell);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-decoration: none;
+  cursor: pointer;
+  transition: transform .12s ease-out;
+  /* 导航脚本靠真实悬停事件点亮 :hover，电视上也生效 */
+}
+
+.site:hover,
+.site:focus { transform: translateY(-2px); }
+
+.icon {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border-radius: var(--radius);
+  background: var(--card);
+  border: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  transition: background .12s ease-out, border-color .12s ease-out;
+}
+
+.site:hover .icon { background: var(--card-hi); border-color: #39415a; }
+
+/* 首字母兜底：底下永远铺一层，图标加载成功后才盖住它 */
+.icon .initial {
+  font-size: calc(var(--cell) * 0.4);
+  font-weight: 700;
+  line-height: 1;
+  color: #fff;
+  background: var(--tint, #39415a);
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-transform: uppercase;
+}
+
+.icon img {
+  position: relative;
+  z-index: 1;
+  width: 52%;
+  height: 52%;
+  object-fit: contain;
+  display: none;
+}
+
+.icon.has-icon img { display: block; }
+.icon.has-icon .initial { background: var(--tint, #39415a); }
+
+/* 收藏里的「更多 / 收起」：跟别的卡片一样大，但明显是按钮 */
+.icon.plain {
+  background: transparent;
+  border-style: dashed;
+  border-color: #333c52;
+}
+
+.site:hover .icon.plain { border-color: var(--accent); background: rgba(75, 140, 255, .10); }
+
+.icon.plain svg { width: 34%; height: 34%; }
+
+.icon.plain svg * { stroke: var(--dim); }
+.site:hover .icon.plain svg * { stroke: var(--accent); }
+
+.name {
+  width: 100%;
+  font-size: var(--name-size, 15px);
+  line-height: 1.3;
+  text-align: center;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ------------------------------------------------------------- 搜索框 -- */
+
+.search-block {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin: 2.2vh 0 2vh;
+}
+
+.search {
+  width: var(--search-w, 600px);
+  max-width: 88vw;
+  height: var(--search-h, 56px);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 22px;
+  border-radius: 999px;
+  background: var(--card);
+  border: 2px solid var(--line);
+  transition: border-color .15s ease-out, background .15s ease-out;
+}
+
+.search:focus-within { border-color: var(--accent); background: #1d2330; }
+
+.search svg { flex: 0 0 auto; width: 20px; height: 20px; }
+.search svg * { stroke: var(--dim); }
+.search:focus-within svg * { stroke: var(--accent); }
+
+.search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  outline: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--search-font, 20px);
+}
+
+.search input::placeholder { color: #5d6678; }
+
+.engines {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.engine {
+  padding: 5px 14px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: none;
+  color: var(--dim);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.engine:hover { color: var(--text); background: rgba(255, 255, 255, .06); }
+
+.engine.on {
+  color: var(--accent);
+  border-color: rgba(75, 140, 255, .45);
+  background: rgba(75, 140, 255, .12);
+}
+
+/* --------------------------------------------------------------- 底部 -- */
+
+.hint {
+  margin: 2.4vh 0 0;
+  font-size: 13px;
+  color: #5d6678;
+  text-align: center;
+}
+
+/* --------------------------------------------------------- 长按的菜单 -- */
+
+.sheet { position: fixed; inset: 0; z-index: 50; }
+
+.sheet-mask {
+  position: absolute;
+  inset: 0;
+  background: rgba(6, 8, 12, .68);
+}
+
+.sheet-panel {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  min-width: 320px;
+  max-width: 62vw;
+  padding: 22px 22px 16px;
+  border-radius: 18px;
+  background: #1a1f2a;
+  border: 1px solid #2c3345;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, .6);
+}
+
+.sheet-title {
+  font-size: 15px;
+  color: var(--dim);
+  margin-bottom: 4px;
+}
+
+.sheet-site {
+  font-size: 19px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 16px;
+  word-break: break-all;
+}
+
+.sheet-actions { display: flex; flex-direction: column; gap: 8px; }
+
+.act {
+  display: block;
+  width: 100%;
+  padding: 13px 16px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: #212734;
+  color: var(--text);
+  font: inherit;
+  font-size: 16px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.act:hover { background: #2a3141; border-color: #3b4459; }
+
+.act.danger { color: #ff8080; }
+
+.act.danger:hover { background: rgba(255, 92, 92, .14); border-color: rgba(255, 92, 92, .5); }

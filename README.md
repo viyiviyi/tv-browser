@@ -1,0 +1,300 @@
+# tv-browser — 电视上的浏览器
+
+一个给 Android TV / 电视盒子 / 投影用的 WebView 浏览器：**遥控器的上、下、左、右、确定、返回**就能逛网页。
+
+它把 [bili-keynav](https://github.com/viyiviyi/bili-keynav) 那套空间导航脚本注入到网页里，
+所以网页上的一切（卡片、按钮、链接、弹层）都能用方向键选中，确定键等于点击，返回键分层回退 ——
+只不过这次要逛的不是某一个站，而是整个互联网。
+
+电视桌面上它叫 **电视浏览器**。
+
+> **和相邻工程的关系**：导航引擎（空间导航算法 + 控制器）来自 `bili-keynav`，
+> 本仓库只额外提供遥控器桥接层 `src-web/web-bridge.js` 和首屏。
+> 构建好的 `app/src/main/assets/keynav-web.js` 已经提交在仓库里，
+> 所以**单独 clone 本仓库就能构建出可用的 APK**；只有要改导航逻辑本身时，
+> 才需要把 `bili-keynav` 放在同级的 `../bili-keynav`（见「改网页脚本」）。
+
+## 首屏
+
+```
+┌──────────────────────────────────────────────────────────┐
+│   收藏                                                    │
+│   ┌────┐ ┌────┐ ┌────┐ ┌────┐ ┌────┐ ┌──────┐           │
+│   │图标│ │图标│ │图标│ │图标│ │图标│ │ 更多 │           │
+│   └────┘ └────┘ └────┘ └────┘ └────┘ └──────┘           │
+│    哔哩    百度   微博   知乎   淘宝    展开              │
+│                                                           │
+│            ┌──────────────────────────────┐               │
+│            │  🔍  搜索或输入网址            │              │
+│            └──────────────────────────────┘               │
+│               百度   必应   搜狗   谷歌                    │
+│                                                           │
+│   最近打开                                                │
+│   ┌────┐ ┌────┐ ┌────┐ ┌────┐                            │
+│   │图标│ │图标│ │图标│ │图标│                            │
+│   └────┘ └────┘ └────┘ └────┘                            │
+│    哔哩    知乎   豆瓣   GitHub                            │
+│                                                           │
+│            长按确定键：收藏 / 删除                         │
+└──────────────────────────────────────────────────────────┘
+```
+
+几条排版的规矩：
+
+- **收藏在上、搜索框居中、最近打开在下**，图标 + 名称的方式显示。
+- **收藏超过一排**时只摆一排，最后一个位置换成「更多」；点它展开全部，按钮同时变成「收起」。
+- **最近打开永远只占一排**，放几个由屏幕宽度决定（不是写死的数量）：
+  算列数时**两边各让出一个图标的宽度**当边距，剩下的宽度里能塞几个就放几个，整排居中。
+- 格子大小跟着屏幕走：电视的逻辑分辨率差得很远（1080p 常见 960×540，也有 1920×1080），
+  写死像素会在一半的机器上挤成一团或显得小气。字号同理。
+- 图标大小另有一个总开关：`home.js` 里的 `ICON_SCALE`（当前 `0.75`）。
+  它同时影响图标、间距和一排能放的数量 —— 960×540 下是 77px、一排 9 个；
+  1920×1080 下是 126px、一排 11 个。嫌大嫌小就改这一个数。
+
+想把首屏先看一眼再决定装不装：
+
+```powershell
+$env:NODE_PATH="C:\nvm4w\nodejs\node_modules"; node tools\preview.mjs
+# → dist/preview-960x540.png、preview-960x540-expanded.png、preview-1920x1080.png
+#   顺带把图标实际多大、一排几个、有没有溢出打印出来
+```
+
+## 做了什么
+
+| 需求 | 实现 |
+| --- | --- |
+| 遥控器六键操作 | `Activity.dispatchKeyEvent` 统一截获 → 交给注入脚本的 `window.__kbTV.key(动作)`：方向键直接移动选中框、确定键直接点选中项 |
+| 首屏不用输网址 | 搜索框；打的是关键词就走搜索引擎，打的是网址（`example.com`、`192.168.1.1:8080` 这些形状）就直接打开 |
+| 搜索引擎可换 | 首屏搜索框下面一排：百度（默认）/ 必应 / 搜狗 / 谷歌，选择存在原生侧 |
+| 网站图标 | 在线抓站点自己的 `/favicon.ico`（失败再试 `/favicon.png`）；都抓不到就回落到**首字母 + 品牌色块**，常见站点配了中文名和品牌色，绝不会空一块 |
+| 收藏 | 预置 12 个常见站点；用户自己加的走下面的"长按" |
+| 收藏超过一排 | 折出「更多」按钮，点开展开全部 |
+| 最近打开 | 只留一排，列数随屏幕宽度算 |
+| 收藏 / 删除 | **在「最近打开」里选中一个网站，长按确定键** → 弹出菜单：「收藏这个网站」/「从最近打开中删除」；在「收藏」里长按则是「从收藏中移除」 |
+| 打字 | 直接用电视/盒子自带的软键盘。输入框聚焦、弹键盘、用键盘的方向键选字，全都交给 WebView 和输入法自己处理，应用和脚本一概不插手 |
+| 链接开在新标签页里 | 页面点开 `target=_blank` / `window.open` 的链接时，脚本通知 Android 开一个新的 WebView 标签页；**返回键 = 退回刚才那一页**，原来那一页原地还原（不会重新加载） |
+| 首屏不会被顶掉 | 首屏是标签页栈最底下那一层，永远不回收；它里面的任何 http 跳转都开成新标签页 |
+| 一次确定就打开 | 确定键交给网页点击；网页万一没点中，应用会用网页上报的选中框中心补一次真实点击（兜底） |
+| 点得动才是真的点得动 | 确定键不是对"选中的那个元素"派发 `click`，而是取选中项中心点的坐标、找该坐标上真正最上层的元素，再像鼠标一样派发 pointer/mouse 一整套事件（带坐标）。有些东西的点击处理绑在更里面的元素上、或者干脆要看事件坐标，"按元素点"是点不动的 |
+| 打开就是打开 | 脚本在 `onPageStarted` 后按 0/40/90/160/260/420/700/1200/2000/3000/4500ms 探测并补注入，不等 `onPageFinished`（大站那一下很晚）；`doUpdateVisitedHistory` 时也补一次（新文档刚建好那一刻） |
+| 不再一直显示"正在加载" | 加载提示缩小放到屏幕底部，首屏一画出来（`onPageCommitVisible`）或脚本就绪就收掉，最长只显示 6 秒 |
+| 选中就 hover | 每换一个选中项，脚本派发 pointer/mouse 进入事件；同时把中心点报给原生，原生补一个真实的鼠标悬停事件 —— 卡片放大、浮层这些 **CSS `:hover`** 才会跟着出现 |
+| 骗过后台让页面当成 PC | UA 换成 Windows 版 Chrome 122，并补上 `navigator.platform = 'Win32'`、`maxTouchPoints = 0`、摘掉 `userAgentData` |
+| 电脑版页面铺满电视 | 注入 `viewport width=1440`，配合 `useWideViewPort + loadWithOverviewMode` 缩放；**本地首屏例外**，它按屏幕宽度排版（否则栅格列数会被整体缩放搞乱） |
+| 能看视频 | 播放器容器选择器补上了通用 `<video>`，所以视频窗口也能被方向键选中：确定 = 播放/暂停，双击 = 全屏；全屏时方向键交还播放器 |
+| 关得掉弹层 | 引擎里那份 B 站专属的关弹层逻辑在别的网站上是空转的，桥接层另配了一份通用兜底：盖住一大半屏幕、又能找到"关闭/取消"按钮的浮层才会被关，找不到就不动手 |
+
+按键行为：
+
+| 遥控器 | 网页里发生什么 |
+| --- | --- |
+| ↑ ↓ ← → | 选中上/下/左/右邻接的卡片、按钮、链接（同一行/同一列优先，选中项会自动滚进视口）；**全屏看视频时**交还播放器：← → 快退快进、↑ ↓ 音量 |
+| 确定 | 点击选中项；选中的是视频窗口（或正在全屏）时 = 播放/暂停 |
+| 确定（连按两下） | 进全屏；全屏时再连按两下退出全屏 |
+| **长按确定**（500ms） | 选中项上派发 `kb-longpress`：**首屏弹出「收藏 / 删除」菜单**；普通网站没人接这个事件，于是什么也不发生 |
+| 返回（短按） | ① 关掉首屏的菜单 → ② 退出全屏 → ③ 关掉弹层 → ④ 退出输入框 → ⑤ 取消选中（记住位置）→ ⑥ 退这个标签页里的上一页 → ⑦ 没有上一页了才关掉标签页 → ⑧ 只剩首屏时提示"再按一次返回键退出" |
+| 返回（连按两下 / 长按） | 直接关掉当前标签页；只剩首屏时直接退出应用 |
+| 按住方向 | 连续移动（连发） |
+| 音量/菜单/数字等其它键 | 一概不拦，交给电视系统 |
+
+> 返回键**先退上一页、再关标签页**（浏览器的习惯），不是电视视频应用那种"返回就关页"。
+>
+> 取消选中会**记住位置**：下一次按方向键从原处接着走，而不是从页面顶部重新开始。
+>
+> 很多红外遥控器的返回键**发不出长按**（只发一次按下，没有重复事件），所以另配了一个手势：
+> **两次按返回之间不超过 500ms（`BrowserWebView.DOUBLE_BACK_MS`）就算"连按两下返回"**，
+> 直接关标签页。第一下该做的还是会先做（退全屏 / 取消选中 / 退上一页），第二下才关标签页。
+> 换标签页时会把这个计时清掉，所以不会出现"连按两下把下面那页也一起关掉"。
+
+> 确定键是**抬手才兑现**的（不是按下就点）：要区分"短按 = 点开"和"长按 = 弹菜单"，
+> 就不能在按下的一瞬间把动作做掉 —— 那样用户还没按住，页面已经被打开了。
+> 代价是单击晚一个按压时长（大约 100ms 上下）。
+>
+> 光标在输入框里时，方向键/确定会退回成键盘事件交给输入框，脚本不抢。
+>
+> 单击和双击共用一个键，所以单击会等一个判定窗口（默认 300ms）：窗口内没有第二下
+> 才把"播放/暂停"兑现，双击只做全屏、不顺带暂停。
+
+## 安装到电视
+
+APK 在 `dist/tv-browser-1.0.0-release.apk`。三种装法，任选：
+
+1. **U 盘**：拷到 U 盘插电视 → 用电视自带的文件管理器打开安装（最省事）。
+2. **adb 网络安装**（电视上先打开「开发者选项 → 网络调试 / ADB 调试」）：
+   ```powershell
+   tools-cache\android-sdk\platform-tools\adb.exe connect 192.168.x.x:5555
+   tools-cache\android-sdk\platform-tools\adb.exe install -r dist\tv-browser-1.0.0-release.apk
+   ```
+3. **应用市场工具**：如电视上的「当贝市场 → 远程推送」之类，直接把 APK 推上去。
+
+最低支持 Android 5.0（API 21），targetSdk 34，未声明需要触摸屏，所以只认遥控器的电视也能出现在应用列表里。
+
+> 登录状态（Cookie）保存在 WebView 里，和别的浏览器不互通。
+>
+> 标签页最多同时留 5 个：超过之后最老的那个会被回收，避免电视盒子内存吃不住 —— 但首屏永远留着。
+
+## 自己构建
+
+不需要装 Android Studio，脚本会从国内镜像拉齐 JDK / Gradle / SDK：
+
+```powershell
+powershell -File tools\setup-toolchain.ps1   # 只跑一次：JDK17 + Gradle 8.7 + Android SDK 34
+powershell -File tools\build.ps1             # 构建 → dist\tv-browser-1.0.0-release.apk
+powershell -File tools\build.ps1 -Test       # 顺带跑单元测试
+powershell -File tools\build.ps1 -Clean      # 干净重建
+```
+
+如果同级目录下已经有一个准备过这套环境的工程（脚本里默认找 `../bili-tv/tools-cache`，
+500MB+ 的 JDK / Gradle / Android SDK），`setup-toolchain.ps1` 会建一个目录联接直接指过去共用，
+不再下一遍；找不到就自己下。
+
+`setup-toolchain.ps1` 里全部走镜像，因为本机直连不到 Google：
+
+| 东西 | 来源 |
+| --- | --- |
+| JDK 17 | `repo.huaweicloud.com/openjdk` |
+| Gradle 8.7 | `mirrors.cloud.tencent.com/gradle` |
+| Android SDK（platforms;android-34 / build-tools;34.0.0 / platform-tools） | `mirrors.cloud.tencent.com/AndroidSDK` |
+| AGP 等依赖 | `maven.aliyun.com`（写在 `settings.gradle` 里） |
+
+签名用的是脚本第一次运行时用 `keytool` 生成的自签名证书（`tools-cache/tvbrowser.keystore`，
+口令 `tvbrowser2024`）。要发布请换成自己的证书。
+
+图标和电视横幅由 `node tools\gen-icons.mjs` 生成（需要 playwright），结果已经提交在 `res/` 里。
+
+## 改网页脚本
+
+导航逻辑不在这个仓库里，而在 `bili-keynav` 的 `src/*.js`（`core.js` 是空间导航算法、`app.js` 是控制器），
+它需要被放在同级的 `../bili-keynav`。这个仓库只额外提供遥控器桥接层 `src-web/web-bridge.js`，
+由 `tools/build-nav.mjs` 把三者拼成 `app/src/main/assets/keynav-web.js`：
+
+```powershell
+node tools\build-nav.mjs                      # app/src/main/assets/keynav-web.js
+powershell -File tools\build.ps1              # 重新打包（build.ps1 会自动跑上面这步）
+```
+
+> `app/src/main/assets/keynav-web.js` 是**已提交的构建产物**：只改首屏或原生代码时，
+> 不装 `bili-keynav` 也能直接 `tools\build.ps1` 打出 APK。
+> 只有 `build-nav.mjs` 需要它，缺了会明确报错。
+
+`build-nav.mjs` 对 `app.js` 做了**两处定点文本替换**（替换不到就直接报错退出，宁可构建失败也不打出悄悄坏掉的脚本）：
+
+| 替换 | 为什么 |
+| --- | --- |
+| `PLAYER_SELECTOR` 末尾补 `, video` | 原版只认 B 站自己的播放器；浏览器要逛任意网站，补上通用 `<video>` 才能用上"确定=播放/暂停、双击=全屏" |
+| `videoOf()` 认得"容器本身就是 `<video>`" | 选择器补上 `video` 之后容器可能**就是**那个元素，而 `querySelector` 不匹配自身，不补的话播放/暂停会静默失效 |
+
+桥对 Android 暴露的入口：
+
+```js
+window.__kbTV.key('up' | 'down' | 'left' | 'right' | 'ok' | 'longok' | 'back')
+//  true  = 网页已经处理掉了
+//  false = 网页没管，Android 自己去关标签页/退上一页/退出应用
+```
+
+反方向（网页 → 原生）走 `window.kbHost`：
+
+```js
+kbHost.ready()                                  // 脚本挂好了，遥控器可以交过来了
+kbHost.newTab(url)                              // 请开一个新标签页（_blank / window.open / 首屏点网站）
+kbHost.hover(x, y)                              // 选中项中心点：原生补真实悬停，CSS :hover 生效
+kbHost.select(x, y, w, h, label)                // 选中框：确定键没点中时原生拿它兜底点击
+// 下面几个只有本地首屏能调，外面的网页改不了用户的收藏
+kbHost.favorite(url) / unfavorite(url) / forget(url) / setEngine(id)
+```
+
+首屏（`assets/home.html` + `home.js` + `home.css`）由原生通过
+`window.tvHome.setData({favorites, recent, engine})` 喂数据；它自己只管显示和交互 ——
+中文名、品牌色、图标全都按域名在 `home.js` 里推出来，原生只存 URL。
+
+## 测试
+
+```powershell
+# 导航算法那一层（需要 ../bili-keynav）
+cd ..\bili-keynav
+node test\core.test.mjs                                        # 23 项：导航算法
+
+# 这个仓库自己这一层
+cd ..\tv-browser
+powershell -File tools\build.ps1 -Test                          # 64 项：JVM 单元测试
+$env:NODE_PATH="C:\nvm4w\nodejs\node_modules"; node test\bridge.mjs  # 33 项：遥控器桥在 Chromium 里的契约
+$env:NODE_PATH="C:\nvm4w\nodejs\node_modules"; node test\home.mjs    # 67 项：首屏在 Chromium 里的行为与版面
+```
+
+（后两个要 playwright；`NODE_PATH` 指的是放全局 `node_modules` 的地方，按自己的环境改。）
+
+JVM 单元测试分四层：
+
+| 测试类 | 项数 | 覆盖 |
+| --- | --- | --- |
+| `RemoteKeyTest` | 8 | 遥控器键值 / 按键文字 → 动作名（含 KeyEvent 数值的交叉校验） |
+| `KeyPolicyTest` | 10 | 按下 / 抬起 / 长按分别由谁处理 |
+| `SiteStoreTest` | 18 | 地址归一化（`//`、`#片段`、根路径斜杠）、收藏与最近打开的去重/上限/排序 |
+| `BrowserWebViewTest` | 28 | **用 Robolectric 在 JVM 上跑真实的 Activity / WebView / 标签页栈** |
+
+`BrowserWebViewTest` 是最有价值的一层，它验的正是"只有装到电视上才看得出来"的胶水代码：
+UA 是不是 Windows 版 Chrome、多窗口有没有打开（决定 `_blank` 能否开成标签页）、
+启动是不是真的加载了本地首屏、首屏里的 http 跳转有没有开成新标签页（而不是把首屏顶掉）、
+`file://` 有没有对着外站网页拦掉、遥控器按键有没有变成 `__kbTV.key('down')` 发进网页、
+**确定的短按和长按分不分得开**、桥没就绪时会不会误吞按键、
+**返回键是不是先退上一页再关标签页、长按和连按两下是不是直接关标签页、
+换页之后有没有把"连按两下"的计时清掉**、首屏会不会被当作最老的标签页回收掉、
+访问过的网站有没有进"最近打开"。
+这些都不需要真机，也不需要模拟器（Robolectric 的 android-all 包同样走阿里云镜像，
+配置在 `app/build.gradle` 的 `testOptions` 里）。
+
+`test/bridge.mjs` 覆盖"网页那一侧的契约"：按键有没有被吃掉、长按有没有变成 `kb-longpress`、
+确定键有没有点中元素、返回键的层级（页面浮层 → 弹层 → **先取消选中并记住位置** → 交给原生，
+以及取消选中之后按方向键能从原处接着走）、
+链接是不是开成新标签页、选中项的悬停坐标有没有报给原生、
+viewport 有没有按"外站 1440 / 本地首屏 device-width"分别处理、重复注入会不会挂两套。
+
+`test/home.mjs` 覆盖首屏：一排能放几个随屏幕宽度变、**两侧留白不小于一个图标的宽度**、
+收藏超一排折出「更多」并能展开/收起、最近打开只占一行、
+**960×540 和 1920×1080 下首屏都一屏放得下**、版面顺序是收藏→搜索→最近、
+长按弹出的菜单里该有什么、搜索/输网址/换引擎分别走哪条路、
+favicon 抓不到时回落首字母、坏数据和空数据不会把页面搞崩。
+
+## 代码结构
+
+```
+app/src/main/java/com/dsh/tvbrowser/
+  MainActivity.java     全屏 Activity、标签页栈（首屏永不回收）、状态提示、全屏视频、退出确认
+  BrowserWebView.java   WebView 配置（UA/多窗口/viewport）、URL 拦截、脚本注入与就绪探测、
+                        按键分发、确定键的短按/长按状态机、悬停事件、兜底点击
+  RemoteKey.java        遥控器键码/按键文字 → 动作名（纯逻辑，可单测）
+  KeyPolicy.java        按下/抬起/长按谁来处理（纯逻辑，可单测）
+  SiteStore.java        收藏 / 最近打开 / 搜索引擎选择（URL 归一化是纯逻辑，可单测）
+  BrowserBridge.java    网页 → 原生的窄接口 window.kbHost
+app/src/main/assets/
+  home.html/.css/.js    本地首屏：搜索框 + 收藏 + 最近打开
+  keynav-web.js         由 ../bili-keynav + src-web/web-bridge.js 构建而来，不要手改
+  early.js              PC 特征伪装
+src-web/
+  web-bridge.js         遥控器桥接层（这个工程自己的）
+tools/
+  setup-toolchain.ps1   一次性准备构建环境（会复用 bili-tv 的那套）
+  build.ps1             构建 + 收产物
+  build-nav.mjs         把导航引擎和桥接层拼成 keynav-web.js
+  preview.mjs           把首屏渲染成预览图
+  gen-icons.mjs         生成电视横幅/图标（需要 playwright）
+app/src/test/java/com/dsh/tvbrowser/
+  RemoteKeyTest.java        遥控器键码/按键文字映射
+  KeyPolicyTest.java        按键分发策略
+  SiteStoreTest.java        地址归一化与存储
+  BrowserWebViewTest.java   Robolectric：真实 Activity/WebView/标签页
+test/
+  bridge.mjs            遥控器桥的浏览器端测试
+  home.mjs              首屏的浏览器端测试
+```
+
+## 已知限制
+
+- **首屏不记会话**：每次启动都回到首屏，不会接着上次继续。电视上"一打开就能搜"比"恢复上次那堆标签页"实在。
+- **回到首屏要按几次返回**：返回键先退这个标签页里的上一页，退无可退才关掉标签页；首屏在栈底，一路按回去就能到。想更快回到首屏，可以连按两下返回（等同长按，直接关掉当前标签页）。
+- **没有地址栏**：网址在首屏搜索框里打，或从收藏/最近打开里进。
+- **部分网站的字偏小**：外站按 1440px 的桌面宽度排版再整体缩放到屏幕，缩过之后正文会变小。
+  想改缩放就动 `src-web/web-bridge.js` 里的 `PAGE_WIDTH`。
+- **证书有问题的网站打不开**：没有做"忽略证书错误"，加载会直接失败。这是刻意的。
+- **DRM 视频**：受 Widevine 等级限制，老盒子上可能只有 480P/720P，普通视频不受影响。
+- **首页的 favicon 是在线抓的**：没网或者站点没有 favicon 时，显示的是首字母色块（不算故障）。

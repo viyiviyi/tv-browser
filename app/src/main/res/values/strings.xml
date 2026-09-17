@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">电视浏览器</string>
+    <string name="loading">正在加载…</string>
+    <string name="exit_hint">再按一次返回键退出</string>
+    <string name="page_error">加载失败：%1$s\n检查一下网络，按确定重试</string>
+    <string name="favorited">已加入收藏</string>
+    <string name="unfavorited">已取消收藏</string>
+    <string name="removed">已从最近打开中删除</string>
+    <string name="fav_limit">收藏已满（最多 %1$d 个）</string>
+</resources>
