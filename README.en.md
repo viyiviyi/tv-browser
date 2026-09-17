@@ -150,13 +150,13 @@ only on hover, tooltips. The remote side solves this with "selected item → one
 
 ## Installing on the TV
 
-The APK is at `dist/tv-browser-1.0.0-release.apk`. Three ways to install it, pick any one:
+The APK is at `dist/tv-browser-1.1.0-release.apk`. Three ways to install it, pick any one:
 
 1. **USB stick**: copy it to a USB stick, plug it into the TV → open it with the TV's own file manager to install (the least hassle).
 2. **adb over the network** (first turn on "Developer options → Network debugging / ADB debugging" on the TV):
    ```powershell
    tools-cache\android-sdk\platform-tools\adb.exe connect 192.168.x.x:5555
-   tools-cache\android-sdk\platform-tools\adb.exe install -r dist\tv-browser-1.0.0-release.apk
+   tools-cache\android-sdk\platform-tools\adb.exe install -r dist\tv-browser-1.1.0-release.apk
    ```
 3. **App market tools**: things like "Dangbei Market → Remote push" on the TV, pushing the APK straight over.
 
@@ -172,7 +172,7 @@ No need to install Android Studio; the scripts pull JDK / Gradle / SDK from dome
 
 ```powershell
 powershell -File tools\setup-toolchain.ps1   # run once: JDK17 + Gradle 8.7 + Android SDK 34
-powershell -File tools\build.ps1             # build → dist\tv-browser-1.0.0-release.apk
+powershell -File tools\build.ps1             # build → dist\tv-browser-1.1.0-release.apk
 powershell -File tools\build.ps1 -Test       # runs the unit tests along the way
 powershell -File tools\build.ps1 -Clean      # clean rebuild
 ```

@@ -150,13 +150,13 @@ $env:NODE_PATH="C:\nvm4w\nodejs\node_modules"; node tools\preview.mjs
 
 ## 安装到电视
 
-APK 在 `dist/tv-browser-1.0.0-release.apk`。三种装法，任选：
+APK 在 `dist/tv-browser-1.1.0-release.apk`。三种装法，任选：
 
 1. **U 盘**：拷到 U 盘插电视 → 用电视自带的文件管理器打开安装（最省事）。
 2. **adb 网络安装**（电视上先打开「开发者选项 → 网络调试 / ADB 调试」）：
    ```powershell
    tools-cache\android-sdk\platform-tools\adb.exe connect 192.168.x.x:5555
-   tools-cache\android-sdk\platform-tools\adb.exe install -r dist\tv-browser-1.0.0-release.apk
+   tools-cache\android-sdk\platform-tools\adb.exe install -r dist\tv-browser-1.1.0-release.apk
    ```
 3. **应用市场工具**：如电视上的「当贝市场 → 远程推送」之类，直接把 APK 推上去。
 
@@ -172,7 +172,7 @@ APK 在 `dist/tv-browser-1.0.0-release.apk`。三种装法，任选：
 
 ```powershell
 powershell -File tools\setup-toolchain.ps1   # 只跑一次：JDK17 + Gradle 8.7 + Android SDK 34
-powershell -File tools\build.ps1             # 构建 → dist\tv-browser-1.0.0-release.apk
+powershell -File tools\build.ps1             # 构建 → dist\tv-browser-1.1.0-release.apk
 powershell -File tools\build.ps1 -Test       # 顺带跑单元测试
 powershell -File tools\build.ps1 -Clean      # 干净重建
 ```
