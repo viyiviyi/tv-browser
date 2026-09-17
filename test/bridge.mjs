@@ -399,6 +399,21 @@ try {
     await page.close();
   }
 
+  /* -------------------------------------------------- 触屏长按 = 悬停 -- */
+  {
+    const page = await browser.newPage({ viewport: { width: 960, height: 540 } });
+    await boot(page);
+
+    // 长按在原生那边被接成了"鼠标悬停"，所以页面这一侧要把右键菜单收掉
+    const prevented = await page.evaluate(() => {
+      const ev = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+      document.body.dispatchEvent(ev);
+      return ev.defaultPrevented;
+    });
+    check('长按的右键菜单被收掉了（长按留给悬停）', prevented === true, String(prevented));
+    await page.close();
+  }
+
   /* ---------------------------------------------------------- viewport -- */
   {
     const page = await browser.newPage({ viewport: { width: 960, height: 540 } });

@@ -90,6 +90,7 @@ $env:NODE_PATH="C:\nvm4w\nodejs\node_modules"; node tools\preview.mjs
 | 电脑版页面铺满电视 | 注入 `viewport width=1440`，配合 `useWideViewPort + loadWithOverviewMode` 缩放；**本地首屏例外**，它按屏幕宽度排版（否则栅格列数会被整体缩放搞乱） |
 | 能看视频 | 播放器容器选择器补上了通用 `<video>`，所以视频窗口也能被方向键选中：确定 = 播放/暂停，双击 = 全屏；全屏时方向键交还播放器 |
 | 关得掉弹层 | 引擎里那份 B 站专属的关弹层逻辑在别的网站上是空转的，桥接层另配了一份通用兜底：盖住一大半屏幕、又能找到"关闭/取消"按钮的浮层才会被关，找不到就不动手 |
+| 触屏也能用 | **手指长按 = 鼠标悬停**。触屏上本来没有 hover 这回事，而不少电脑版页面的操作（"立即播放"浮层、下拉菜单、卡片上的小按钮）就藏在 CSS `:hover` 里 —— 长按会把"鼠标"停到手指按住的位置，把那些东西叫出来 |
 
 按键行为：
 
@@ -112,6 +113,30 @@ $env:NODE_PATH="C:\nvm4w\nodejs\node_modules"; node tools\preview.mjs
 > **两次按返回之间不超过 500ms（`BrowserWebView.DOUBLE_BACK_MS`）就算"连按两下返回"**，
 > 直接关标签页。第一下该做的还是会先做（退全屏 / 取消选中 / 退上一页），第二下才关标签页。
 > 换标签页时会把这个计时清掉，所以不会出现"连按两下把下面那页也一起关掉"。
+
+## 触屏
+
+手机、平板，或者带触摸的电视，插上就能用 —— 点击、滚动、双指缩放都是 WebView 原生的行为，
+这里只补了缺的那一块：**hover**。
+
+触屏没有"鼠标停在上面"这回事（点一下触发完 click 就走开了），而相当多的电脑版页面把关键操作
+藏在 CSS `:hover` 里：卡片的"立即播放"浮层、下拉菜单、悬停才出现的小按钮、tooltip。
+遥控器那边靠"选中项 → 原生补一个真实鼠标悬停"解决，触屏这边就用长按：
+
+| 手指动作 | 发生什么 |
+| --- | --- |
+| 按住不动 400ms（`BrowserWebView.TOUCH_HOVER_MS`） | 把"鼠标"停到手指按住的位置，网页的 `:hover` 生效 |
+| 松手 | 悬停**留着** —— 因为接下来往往就是要点 hover 出来的那个按钮 |
+| 手指挪开（超过系统 touch slop） | 取消，不干扰滚动和拖动 |
+| 下一次按下 | 先把上一次的悬停收掉，免得残留 |
+
+> 取 400ms 是刻意的：比系统的长按判定（500ms）早一点，抢在文本选择手柄弹出来之前把悬停派发出去。
+>
+> 默认的长按行为（右键菜单）在注入脚本里被收掉了 —— 长按在这个应用里就是"悬停"，
+> 不该同时弹出别的菜单。
+>
+> 触屏上不会用到遥控器那套选中框，但导航脚本仍然在跑（它同时也负责把链接开成新标签页这些事情），
+> 两者互不打扰。
 
 > 确定键是**抬手才兑现**的（不是按下就点）：要区分"短按 = 点开"和"长按 = 弹菜单"，
 > 就不能在按下的一瞬间把动作做掉 —— 那样用户还没按住，页面已经被打开了。
@@ -231,8 +256,8 @@ node test\core.test.mjs                                        # 23 项：导航
 
 # 这个仓库自己这一层
 cd ..\tv-browser
-powershell -File tools\build.ps1 -Test                          # 69 项：JVM 单元测试
-$env:NODE_PATH="C:\nvm4w\nodejs\node_modules"; node test\bridge.mjs  # 38 项：遥控器桥在 Chromium 里的契约
+powershell -File tools\build.ps1 -Test                          # 75 项：JVM 单元测试
+$env:NODE_PATH="C:\nvm4w\nodejs\node_modules"; node test\bridge.mjs  # 39 项：遥控器桥在 Chromium 里的契约
 $env:NODE_PATH="C:\nvm4w\nodejs\node_modules"; node test\home.mjs    # 86 项：首屏在 Chromium 里的行为与版面
 ```
 
@@ -245,7 +270,7 @@ JVM 单元测试分四层：
 | `RemoteKeyTest` | 8 | 遥控器键值 / 按键文字 → 动作名（含 KeyEvent 数值的交叉校验） |
 | `KeyPolicyTest` | 10 | 按下 / 抬起 / 长按分别由谁处理 |
 | `SiteStoreTest` | 23 | 地址归一化（`//`、`#片段`、根路径斜杠）、收藏与最近打开的去重/上限/排序 |
-| `BrowserWebViewTest` | 28 | **用 Robolectric 在 JVM 上跑真实的 Activity / WebView / 标签页栈** |
+| `BrowserWebViewTest` | 34 | **用 Robolectric 在 JVM 上跑真实的 Activity / WebView / 标签页栈** |
 
 `BrowserWebViewTest` 是最有价值的一层，它验的正是"只有装到电视上才看得出来"的胶水代码：
 UA 是不是 Windows 版 Chrome、多窗口有没有打开（决定 `_blank` 能否开成标签页）、

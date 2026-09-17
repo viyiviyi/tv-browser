@@ -9,6 +9,7 @@ import static org.robolectric.Shadows.shadowOf;
 
 import android.os.Looper;
 import android.view.KeyEvent;
+import android.view.MotionEvent;
 import android.webkit.WebSettings;
 
 import org.junit.Test;
@@ -460,5 +461,103 @@ public class BrowserWebViewTest {
         BrowserWebView home = a.homeTab();
         home.clearSelection();
         assertFalse("没有选中框时不该凭空点一下", home.clickAtSelection());
+    }
+
+    /* ------------------------------------------------------ 触屏长按悬停 -- */
+
+    private static MotionEvent touch(int action, float x, float y) {
+        return MotionEvent.obtain(0L, 0L, action, x, y, 0);
+    }
+
+    @Test
+    public void longPressOnATouchscreenSendsAHover() {
+        MainActivity a = activity();
+        BrowserWebView home = a.homeTab();
+        loadHome(home);
+
+        home.onTouchEvent(touch(MotionEvent.ACTION_DOWN, 120f, 240f));
+        assertEquals("还没按够时间，不该有悬停", 0, home.getHoverCount());
+
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(BrowserWebView.TOUCH_HOVER_MS + 60));
+
+        assertEquals("长按要派发一次真实悬停（网页的 :hover 靠它）", 1, home.getHoverCount());
+        assertEquals("悬停点就是手指按住的位置", 120f, home.getLastHoverX(), 0.01f);
+        assertEquals(240f, home.getLastHoverY(), 0.01f);
+        assertTrue(home.isTouchHoverActive());
+    }
+
+    @Test
+    public void liftingTheFingerKeepsTheHover() {
+        MainActivity a = activity();
+        BrowserWebView home = a.homeTab();
+        loadHome(home);
+
+        home.onTouchEvent(touch(MotionEvent.ACTION_DOWN, 120f, 240f));
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(BrowserWebView.TOUCH_HOVER_MS + 60));
+        home.onTouchEvent(touch(MotionEvent.ACTION_UP, 120f, 240f));
+
+        // 松手之后悬停得留着：用户还要去点 hover 出来的那个按钮
+        assertEquals(1, home.getHoverCount());
+        assertTrue(home.isTouchHoverActive());
+        assertEquals(120f, home.getLastHoverX(), 0.01f);
+    }
+
+    @Test
+    public void theNextTouchClearsThePreviousHover() {
+        MainActivity a = activity();
+        BrowserWebView home = a.homeTab();
+        loadHome(home);
+
+        home.onTouchEvent(touch(MotionEvent.ACTION_DOWN, 120f, 240f));
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(BrowserWebView.TOUCH_HOVER_MS + 60));
+        home.onTouchEvent(touch(MotionEvent.ACTION_UP, 120f, 240f));
+        assertTrue(home.isTouchHoverActive());
+
+        // 再按下去：上一次的悬停先收掉，免得残留
+        home.onTouchEvent(touch(MotionEvent.ACTION_DOWN, 50f, 60f));
+
+        assertFalse(home.isTouchHoverActive());
+        assertEquals(-1f, home.getLastHoverX(), 0.01f);
+    }
+
+    @Test
+    public void quickTapLeavesNoHoverBehind() {
+        MainActivity a = activity();
+        BrowserWebView home = a.homeTab();
+        loadHome(home);
+
+        home.onTouchEvent(touch(MotionEvent.ACTION_DOWN, 120f, 240f));
+        home.onTouchEvent(touch(MotionEvent.ACTION_UP, 120f, 240f));
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(BrowserWebView.TOUCH_HOVER_MS + 300));
+
+        assertEquals("普通点一下不该留下悬停", 0, home.getHoverCount());
+        assertFalse(home.isTouchHoverActive());
+    }
+
+    @Test
+    public void movingTheFingerCancelsTheLongPress() {
+        MainActivity a = activity();
+        BrowserWebView home = a.homeTab();
+        loadHome(home);
+
+        home.onTouchEvent(touch(MotionEvent.ACTION_DOWN, 100f, 100f));
+        home.onTouchEvent(touch(MotionEvent.ACTION_MOVE, 400f, 500f));
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(BrowserWebView.TOUCH_HOVER_MS + 60));
+
+        assertEquals("手指挪开就去滚动页面了，不算长按", 0, home.getHoverCount());
+        assertFalse(home.isTouchHoverActive());
+    }
+
+    @Test
+    public void aCancelEventStopsTheTimerToo() {
+        MainActivity a = activity();
+        BrowserWebView home = a.homeTab();
+        loadHome(home);
+
+        home.onTouchEvent(touch(MotionEvent.ACTION_DOWN, 120f, 240f));
+        home.onTouchEvent(touch(MotionEvent.ACTION_CANCEL, 120f, 240f));
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(BrowserWebView.TOUCH_HOVER_MS + 60));
+
+        assertEquals("取消掉的手势不该再补一次悬停", 0, home.getHoverCount());
     }
 }

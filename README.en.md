@@ -90,6 +90,7 @@ $env:NODE_PATH="C:\nvm4w\nodejs\node_modules"; node tools\preview.mjs
 | Desktop pages fill the TV | Injects `viewport width=1440`, combined with `useWideViewPort + loadWithOverviewMode` scaling; **the local home screen is the exception**, it lays out to the screen width (otherwise the grid column count would be scrambled by the overall scaling) |
 | Can watch video | The player container selectors gained the generic `<video>`, so a video window can be selected with the D-pad too: OK = play/pause, double press = fullscreen; in fullscreen the D-pad goes back to the player |
 | Overlays can be closed | The Bilibili-specific overlay-closing logic in the engine is a no-op on other sites, so the bridge layer has its own generic fallback: only an overlay that covers more than half the screen and has a findable "close/cancel" button gets closed, and if none is found it does nothing |
+| Works on a touchscreen too | **A long press with your finger = a mouse hover.** Touchscreens have no hover at all, and a fair number of desktop pages hide their controls in CSS `:hover` (the "play now" overlay, dropdown menus, the little buttons on a card) — a long press parks the "mouse" where your finger is and brings those out |
 
 Key behaviour:
 
@@ -112,6 +113,30 @@ Key behaviour:
 > **two Back presses less than 500ms apart (`BrowserWebView.DOUBLE_BACK_MS`) count as a "double press of Back"**,
 > which closes the tab directly. The first press still does what it should first (leave fullscreen / deselect / go back a page), and only the second closes the tab.
 > Switching tabs clears that timer, so you never get "a double press closes the page underneath as well".
+
+## Touch screens
+
+Phones, tablets, or a TV with a touch panel — plug it in and it works. Tapping, scrolling and pinch-zoom
+are all stock WebView behaviour; the only thing added here is the missing piece: **hover**.
+
+A touchscreen has no "the mouse is resting on top of it" (a tap fires click and moves on), and quite a lot of
+desktop pages hide their key controls in CSS `:hover`: the "play now" overlay, dropdown menus, buttons that appear
+only on hover, tooltips. The remote side solves this with "selected item → one real mouse hover"; here it is a long press:
+
+| Finger | What happens |
+| --- | --- |
+| Hold still for 400ms (`BrowserWebView.TOUCH_HOVER_MS`) | Parks the "mouse" where your finger is, and the page's `:hover` takes effect |
+| Lift the finger | The hover **stays** — because what you usually want next is to tap the thing that just appeared |
+| Move the finger (past the system touch slop) | Cancelled; scrolling and dragging are untouched |
+| The next press | Clears the previous hover first, so nothing is left behind |
+
+> 400ms is deliberate: a little earlier than the system long-press threshold (500ms), so the hover is dispatched before the text-selection handles come up.
+>
+> The default long-press behaviour (the context menu) is suppressed by the injected script — a long press
+> in this app means hover, and shouldn't pop up some other menu at the same time.
+>
+> The remote-control selection box isn't used on a touchscreen, but the navigation script still runs
+> (it's what opens links as new tabs and so on), and the two don't get in each other's way.
 
 > The OK key **only takes effect on key-up** (it doesn't click on key-down): to tell "short press = open" from "long press = pop up a menu",
 > the action can't be performed at the instant of key-down — that way the page would already be open before the user has even finished holding it down.
@@ -231,8 +256,8 @@ node test\core.test.mjs                                        # 23 items: navig
 
 # this repository's own layer
 cd ..\tv-browser
-powershell -File tools\build.ps1 -Test                          # 69 items: JVM unit tests
-$env:NODE_PATH="C:\nvm4w\nodejs\node_modules"; node test\bridge.mjs  # 38 items: the remote-control bridge contract in Chromium
+powershell -File tools\build.ps1 -Test                          # 75 items: JVM unit tests
+$env:NODE_PATH="C:\nvm4w\nodejs\node_modules"; node test\bridge.mjs  # 39 items: the remote-control bridge contract in Chromium
 $env:NODE_PATH="C:\nvm4w\nodejs\node_modules"; node test\home.mjs    # 86 items: home screen behaviour and layout in Chromium
 ```
 
@@ -245,7 +270,7 @@ The JVM unit tests come in four layers:
 | `RemoteKeyTest` | 8 | remote key codes / key text → action names (including cross-checking the KeyEvent numeric values) |
 | `KeyPolicyTest` | 10 | who handles key-down / key-up / long press |
 | `SiteStoreTest` | 23 | address normalisation (`//`, `#fragment`, the slash on the root path), dedup/limits/ordering for favorites and recent sites |
-| `BrowserWebViewTest` | 28 | **runs a real Activity / WebView / tab stack on the JVM with Robolectric** |
+| `BrowserWebViewTest` | 34 | **runs a real Activity / WebView / tab stack on the JVM with Robolectric** |
 
 `BrowserWebViewTest` is the most valuable layer, because what it checks is exactly the glue code that "you can only see once it's installed on a TV":
 whether the UA is Windows Chrome, whether multi-window is on (which decides whether `_blank` can become a tab),

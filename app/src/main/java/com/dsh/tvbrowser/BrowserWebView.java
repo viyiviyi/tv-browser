@@ -14,6 +14,7 @@ import android.view.InputDevice;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewConfiguration;
 import android.webkit.CookieManager;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceError;
@@ -90,6 +91,14 @@ public class BrowserWebView extends WebView {
     public static final long DOUBLE_BACK_MS = 500L;
 
     /**
+     * 触屏上手指按住多久算"把鼠标停在这里"。
+     *
+     * 取 400ms，比系统的长按（500ms）早一点 —— 要在文本选择手柄弹出来之前
+     * 先把悬停派发出去。
+     */
+    public static final long TOUCH_HOVER_MS = 400L;
+
+    /**
      * 注入脚本就绪探测：页面脚本挂上之前遥控器按键只能交回 WebView 原生处理。
      * 返回布尔值（evaluateJavascript 会把字符串包一层引号，别用字符串判断）。
      */
@@ -125,6 +134,13 @@ public class BrowserWebView extends WebView {
     /** 上一次按返回键的时间（用来判断"连按两下"） */
     private long lastBackAt = 0L;
 
+    /* 触屏长按 → 鼠标悬停 */
+    private float touchDownX = 0f;
+    private float touchDownY = 0f;
+    /** 现在是不是有一次"长按悬停"还没收掉 */
+    private boolean touchHoverActive = false;
+    private int touchSlop = -1;
+
     /* 选中框（CSS 像素，相对视口），由网页通过 kbHost.select 上报 */
     private volatile int selX = -1;
     private volatile int selY = -1;
@@ -144,6 +160,15 @@ public class BrowserWebView extends WebView {
             if (!okDown) return;
             okLongFired = true;
             sendKey(RemoteKey.LONG_OK);
+        }
+    };
+
+    /** 触屏长按的计时器：到点了就把"鼠标"停到手指按住的地方 */
+    private final Runnable touchHoverTask = new Runnable() {
+        @Override
+        public void run() {
+            touchHoverActive = true;
+            hoverAtViewPoint(touchDownX, touchDownY);
         }
     };
 
@@ -449,16 +474,30 @@ public class BrowserWebView extends WebView {
      * @param cssX 视口坐标系里的 CSS 像素（就是 getBoundingClientRect 那套）
      */
     public void hoverAt(int cssX, int cssY) {
+        if (cssX < 0 || cssY < 0) {
+            dispatchHover(-1f, -1f, true);
+            return;
+        }
+        float scale = currentScale();
+        dispatchHover(cssX * scale, cssY * scale, false);
+    }
+
+    /** 悬停到视图坐标（物理像素）上的某一点 —— 触屏长按走这条 */
+    void hoverAtViewPoint(float viewX, float viewY) {
+        dispatchHover(viewX, viewY, false);
+    }
+
+    private float currentScale() {
         float scale = 1f;
         try {
             scale = getScale();
         } catch (Throwable ignored) {
             // 页面还没排版时拿不到缩放，按 1 处理
         }
-        if (!(scale > 0f)) scale = 1f;
-        boolean leave = cssX < 0 || cssY < 0;
-        float x = leave ? -1f : cssX * scale;
-        float y = leave ? -1f : cssY * scale;
+        return scale > 0f ? scale : 1f;
+    }
+
+    private void dispatchHover(float x, float y, boolean leave) {
         lastHoverX = x;
         lastHoverY = y;
         hoverCount++;
@@ -478,6 +517,75 @@ public class BrowserWebView extends WebView {
         } catch (Throwable t) {
             Log.w(MainActivity.TAG, "派发悬停事件失败", t);
         }
+    }
+
+    /* ------------------------------------------------------ 触屏长按悬停 -- */
+    /*
+     * 手指在屏幕上按住不动，就当成"鼠标停在那里"：派发一次真实的
+     * ACTION_HOVER_MOVE，网页上的 CSS :hover 于是生效。
+     *
+     * 触屏上本来没有 hover 这回事 —— 点一下触发 click 就走掉了，而很多网页
+     * （尤其是电脑版页面）的关键操作藏在 :hover 里："立即播放"浮层、下拉菜单、
+     * 卡片上的小按钮、tooltip，手指根本够不着。长按补的就是这一块。
+     *
+     * 所以在这个应用里 **长按 = 悬停**，不是"右键菜单"。浏览器默认的长按行为
+     * （文本选择手柄、上下文菜单）由注入脚本收掉。
+     */
+
+    @Override
+    public boolean onTouchEvent(MotionEvent event) {
+        trackTouchHover(event);
+        return super.onTouchEvent(event);
+    }
+
+    private void trackTouchHover(MotionEvent event) {
+        switch (event.getActionMasked()) {
+            case MotionEvent.ACTION_DOWN:
+                clearTouchHover();              // 上一次留下的悬停先收掉
+                touchDownX = event.getX();
+                touchDownY = event.getY();
+                handler.removeCallbacks(touchHoverTask);
+                handler.postDelayed(touchHoverTask, TOUCH_HOVER_MS);
+                break;
+
+            case MotionEvent.ACTION_MOVE:
+                if (touchHoverActive) break;    // 已经悬停上了：后面是滚动/拖动，不管
+                if (Math.abs(event.getX() - touchDownX) > touchSlop()
+                        || Math.abs(event.getY() - touchDownY) > touchSlop()) {
+                    handler.removeCallbacks(touchHoverTask);   // 手指挪开了就不算长按
+                }
+                break;
+
+            case MotionEvent.ACTION_UP:
+            case MotionEvent.ACTION_CANCEL:
+                // 只是停掉计时。已经建立起来的悬停**保持住** ——
+                // 这样用户松手之后还能点到 hover 出来的那个按钮。
+                handler.removeCallbacks(touchHoverTask);
+                break;
+
+            default:
+                break;
+        }
+    }
+
+    /** 收掉上一次的触屏悬停（本来就没有的话什么也不做） */
+    private void clearTouchHover() {
+        handler.removeCallbacks(touchHoverTask);
+        if (!touchHoverActive) return;
+        touchHoverActive = false;
+        hoverAt(-1, -1);
+    }
+
+    private int touchSlop() {
+        if (touchSlop < 0) {
+            touchSlop = ViewConfiguration.get(getContext()).getScaledTouchSlop();
+        }
+        return touchSlop;
+    }
+
+    /** 测试用：现在是不是处在"长按悬停"状态 */
+    boolean isTouchHoverActive() {
+        return touchHoverActive;
     }
 
     /** 在选中框中心补一次真实点击（确定键的兜底） */
@@ -580,7 +688,9 @@ public class BrowserWebView extends WebView {
     public void destroy() {
         handler.removeCallbacks(injectProbe);
         handler.removeCallbacks(okLongTask);
+        handler.removeCallbacks(touchHoverTask);
         okDown = false;
+        touchHoverActive = false;
         super.destroy();
     }
 

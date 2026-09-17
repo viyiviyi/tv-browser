@@ -1829,6 +1829,8 @@ function unmount() {
  *      页面不接才轮到"退全屏 → 关弹层 → 退输入 → 取消选中 → 交给原生"。
  *      返回键真的落到原生头上时是：短按先退上一页、没有上一页才关标签页；
  *      长按或连按两下直接关标签页（很多红外遥控器发不出长按）。
+ *   5. 触屏友好：长按在原生那边被当成"鼠标悬停"（触屏没有 hover，而不少
+ *      电脑版页面的操作藏在 :hover 里），这里把默认的右键菜单收掉。
  *
  * 输入框聚焦之后弹不弹软键盘不归这里管：那是 WebView 和系统输入法自己的事。
  */
@@ -1974,6 +1976,21 @@ function tvInstall(win) {
         e.stopPropagation();
       }
     }, true);
+  }
+
+  /* -------------------------------------------------- 长按 = 鼠标悬停 -- */
+  /*
+   * 触屏上原生把"长按"接管成了鼠标悬停（见 BrowserWebView.trackTouchHover），
+   * 所以这边要把浏览器默认的长按行为收掉 —— 不然长按的同时还会弹出右键菜单，
+   * 跟悬停打架。
+   *
+   * 只收 contextmenu 这一条：文本选择手柄是 Chromium 内部弹的，
+   * 从 DOM 这一层拦不住。
+   */
+  function installTouchBehavior() {
+    try {
+      doc.addEventListener('contextmenu', (e) => e.preventDefault(), true);
+    } catch { /* ignore */ }
   }
 
   /* --------------------------------------------------------- 按键分发 -- */
@@ -2272,6 +2289,7 @@ function tvInstall(win) {
 
   fitViewport();
   installTabs();
+  installTouchBehavior();
   if (doc.readyState === 'loading') doc.addEventListener('DOMContentLoaded', fitViewport, { once: true });
 
   // 通知 Android 端：桥已经就绪，可以把遥控器按键交过来了
