@@ -52,6 +52,11 @@ A few layout rules:
 - The icon size has its own master switch: `ICON_SCALE` in `home.js` (currently `0.75`).
   It affects the icons, the spacing and how many fit in a row — at 960×540 that's 77px and 9 per row;
   at 1920×1080 it's 126px and 11 per row. Too big or too small, change that one number.
+- **Long pressing the OK key pops up a menu**: under "Recent sites" it offers "Favorite this site / Remove from recent sites",
+  and under "Favorites" it offers "Move" / "Delete". Picking **Move** enters **move mode**:
+  the D-pad shifts that item around (← ↑ earlier, → ↓ later), and the OK key or the Back button finishes,
+  with the new order written back to the native side. Move mode expands the favorites automatically
+  (otherwise you'd be shuffling something you can't see), and the item being moved is highlighted.
 
 To take a look at the home screen before deciding whether to install:
 
@@ -72,7 +77,7 @@ $env:NODE_PATH="C:\nvm4w\nodejs\node_modules"; node tools\preview.mjs
 | Favorites | 12 common sites preloaded; ones the user adds go through the "long press" below |
 | More than one row of favorites | Collapses into a "More" button; tapping it expands everything |
 | Recent sites | Only one row, with the number of columns computed from the screen width |
-| Favorite / delete | **Select a site under "Recent sites" and long press the OK key** → a menu pops up: "Favorite this site" / "Remove from recent sites"; long pressing inside "Favorites" gives "Remove from favorites" |
+| Favorite / delete / move | **Select a site under "Recent sites" and long press the OK key** → a menu pops up: "Favorite this site" / "Remove from recent sites"; long pressing inside "Favorites" gives "Move" / "Delete", and picking "Move" lets you reorder with the D-pad |
 | Typing | Uses the TV/box's own soft keyboard directly. Focusing the input box, popping the keyboard, picking characters with the keyboard's D-pad — all of it is left to WebView and the IME, and the app and the script stay out of it entirely |
 | Links open in a new tab | When a page opens a `target=_blank` / `window.open` link, the script tells Android to open a new WebView tab; **the Back button = go back to that previous page**, and the page it came from is restored in place (no reload) |
 | The home screen can't be pushed out | The home screen is the bottom layer of the tab stack and is never reclaimed; any http navigation inside it opens as a new tab |
@@ -93,7 +98,7 @@ Key behaviour:
 | ↑ ↓ ← → | Selects the card, button or link neighbouring in that direction (same row/column preferred, and the selection scrolls into the viewport automatically); **in fullscreen video** it goes back to the player: ← → rewind/fast-forward, ↑ ↓ volume |
 | OK | Clicks the selected item; when the selection is a video window (or video is fullscreen) = play/pause |
 | OK (double press) | Enters fullscreen; double press again in fullscreen leaves it |
-| **Long press OK** (500ms) | Dispatches `kb-longpress` on the selected item: **the home screen pops up its "Favorite / Remove" menu**; ordinary sites have nobody listening for that event, so nothing happens |
+| **Long press OK** (500ms) | Dispatches `kb-longpress` on the selected item: **the home screen pops up its menu** (favorite/delete under "Recent sites", move/delete under "Favorites"); ordinary sites have nobody listening for that event, so nothing happens |
 | Back (short press) | ① close the home screen's menu → ② leave fullscreen → ③ close the overlay → ④ leave the input box → ⑤ deselect (remembering the position) → ⑥ go back one page within this tab → ⑦ only when there is no previous page, close the tab → ⑧ when only the home screen is left, show "press Back again to exit" |
 | Back (double press / long press) | Closes the current tab directly; when only the home screen is left, exits the app directly |
 | Holding a direction | Keeps moving (key repeat) |
@@ -203,7 +208,15 @@ kbHost.hover(x, y)                              // centre of the selected item: 
 kbHost.select(x, y, w, h, label)                // selection box: native uses it as a fallback click when OK didn't hit anything
 // the ones below can only be called from the local home screen; outside pages can't touch the user's favorites
 kbHost.favorite(url) / unfavorite(url) / forget(url) / setEngine(id)
+kbHost.saveFavorites(json)                      // the home screen reordered the favorites, here is the whole list back
 ```
+
+Going the other way there are also two **cancellable DOM events** — if the page catches them the key belongs to the page, and if nobody catches them the normal navigation runs:
+
+| Event | When it fires | What the home screen does with it |
+| --- | --- | --- |
+| `kb-longpress` | On a long press of OK, dispatched on the **currently selected item** | Pops up the favorite/delete and move-position menus |
+| `kb-key` | On every D-pad press and OK, dispatched on `document` | In move mode, turns the D-pad from "change the selection" into "shift this item" |
 
 The home screen (`assets/home.html` + `home.js` + `home.css`) is fed its data by the native side through
 `window.tvHome.setData({favorites, recent, engine})`; it itself only handles display and interaction —
@@ -218,9 +231,9 @@ node test\core.test.mjs                                        # 23 items: navig
 
 # this repository's own layer
 cd ..\tv-browser
-powershell -File tools\build.ps1 -Test                          # 64 items: JVM unit tests
-$env:NODE_PATH="C:\nvm4w\nodejs\node_modules"; node test\bridge.mjs  # 33 items: the remote-control bridge contract in Chromium
-$env:NODE_PATH="C:\nvm4w\nodejs\node_modules"; node test\home.mjs    # 67 items: home screen behaviour and layout in Chromium
+powershell -File tools\build.ps1 -Test                          # 69 items: JVM unit tests
+$env:NODE_PATH="C:\nvm4w\nodejs\node_modules"; node test\bridge.mjs  # 38 items: the remote-control bridge contract in Chromium
+$env:NODE_PATH="C:\nvm4w\nodejs\node_modules"; node test\home.mjs    # 86 items: home screen behaviour and layout in Chromium
 ```
 
 (The last two need playwright; `NODE_PATH` points at wherever the global `node_modules` lives, change it for your own setup.)
@@ -231,7 +244,7 @@ The JVM unit tests come in four layers:
 | --- | --- | --- |
 | `RemoteKeyTest` | 8 | remote key codes / key text → action names (including cross-checking the KeyEvent numeric values) |
 | `KeyPolicyTest` | 10 | who handles key-down / key-up / long press |
-| `SiteStoreTest` | 18 | address normalisation (`//`, `#fragment`, the slash on the root path), dedup/limits/ordering for favorites and recent sites |
+| `SiteStoreTest` | 23 | address normalisation (`//`, `#fragment`, the slash on the root path), dedup/limits/ordering for favorites and recent sites |
 | `BrowserWebViewTest` | 28 | **runs a real Activity / WebView / tab stack on the JVM with Robolectric** |
 
 `BrowserWebViewTest` is the most valuable layer, because what it checks is exactly the glue code that "you can only see once it's installed on a TV":

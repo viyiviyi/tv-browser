@@ -138,6 +138,30 @@ public final class SiteStore {
         return true;
     }
 
+    /**
+     * 整份替换收藏 —— 首屏调完「移动位置」会把排好的顺序交回来。
+     *
+     * 会重新做一次归一化和去重，并且不越过上限（页面递上来的东西不能全信）。
+     *
+     * @return 真的写进去了返回 true
+     */
+    public boolean replaceFavorites(String json) {
+        if (json == null || json.isEmpty()) return false;
+        List<String> list = new ArrayList<>();
+        try {
+            JSONArray arr = new JSONArray(json);
+            for (int i = 0; i < arr.length() && list.size() < MAX_FAVORITES; i++) {
+                String u = canonical(arr.optString(i, ""));
+                if (!u.isEmpty() && !list.contains(u)) list.add(u);
+            }
+        } catch (JSONException e) {
+            // 递上来的不是合法 JSON：宁可不改，也不要清空用户的收藏
+            return false;
+        }
+        writeList(KEY_FAVORITES, list);
+        return true;
+    }
+
     /* -------------------------------------------------------- 最近打开 -- */
 
     /** 记一条浏览记录：已经在里面的提到最前面，超出上限的丢掉最老的 */

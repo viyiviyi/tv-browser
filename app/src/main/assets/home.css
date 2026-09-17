@@ -173,6 +173,18 @@ body {
   text-overflow: ellipsis;
 }
 
+/* 正在调整位置的那一张：让它在一排里一眼看得出来 */
+.site.moving .icon {
+  border-color: var(--accent);
+  background: rgba(75, 140, 255, .16);
+  box-shadow: 0 0 0 3px rgba(75, 140, 255, .22);
+}
+
+.site.moving .name {
+  color: var(--accent);
+  font-weight: 600;
+}
+
 /* ------------------------------------------------------------- 搜索框 -- */
 
 .search-block {

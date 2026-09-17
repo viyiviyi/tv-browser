@@ -198,4 +198,62 @@ public class SiteStoreTest {
         assertEquals(0, o.getJSONArray("recent").length());
         assertEquals("baidu", o.getString("engine"));
     }
+
+    /* ------------------------------------------------------ 收藏重排序 -- */
+
+    @Test
+    public void replacingFavoritesKeepsTheGivenOrder() {
+        // 首屏调完「移动位置」交回来的就是这个顺序
+        assertTrue(store.replaceFavorites(
+                "[\"https://c.example.com\",\"https://a.example.com\",\"https://b.example.com\"]"));
+
+        List<String> favs = store.favorites();
+        assertEquals(3, favs.size());
+        assertEquals("https://c.example.com", favs.get(0));
+        assertEquals("https://a.example.com", favs.get(1));
+        assertEquals("https://b.example.com", favs.get(2));
+    }
+
+    @Test
+    public void replacingFavoritesNormalisesAndDedupes() {
+        assertTrue(store.replaceFavorites(
+                "[\"https://a.example.com/\",\"https://a.example.com#top\",\"https://b.example.com/\"]"));
+
+        List<String> favs = store.favorites();
+        assertEquals("同一份名单里的重复项要并掉", 2, favs.size());
+        assertEquals("https://a.example.com", favs.get(0));
+        assertEquals("https://b.example.com", favs.get(1));
+    }
+
+    @Test
+    public void replacingFavoritesStopsAtTheLimit() {
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = 0; i < SiteStore.MAX_FAVORITES + 20; i++) {
+            if (i > 0) sb.append(',');
+            sb.append("\"https://f").append(i).append(".example.com\"");
+        }
+        sb.append(']');
+
+        assertTrue(store.replaceFavorites(sb.toString()));
+        assertEquals(SiteStore.MAX_FAVORITES, store.favorites().size());
+    }
+
+    @Test
+    public void badJsonLeavesFavoritesAlone() {
+        int before = store.favorites().size();
+        assertFalse("递上来一串坏 JSON 时不能把用户的收藏清空",
+                store.replaceFavorites("{不是数组}"));
+        assertEquals(before, store.favorites().size());
+
+        assertFalse(store.replaceFavorites(null));
+        assertFalse(store.replaceFavorites(""));
+        assertEquals(before, store.favorites().size());
+    }
+
+    @Test
+    public void replacingWithAnEmptyListClearsThem() {
+        // 空数组是合法输入（用户把收藏删光了），这个和"坏 JSON"要区分开
+        assertTrue(store.replaceFavorites("[]"));
+        assertEquals(0, store.favorites().size());
+    }
 }

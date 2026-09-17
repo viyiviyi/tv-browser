@@ -14,7 +14,7 @@ import android.widget.Toast;
  * 权限分两档：
  *   浏览类（ready / newTab / hover / select / toast / log）
  *     任意 http(s) 页面都能用 —— 浏览器本来就要让网页能开链接、能弹输入法。
- *   首屏类（favorite / unfavorite / forget / setEngine）
+ *   首屏类（favorite / unfavorite / forget / setEngine / saveFavorites）
  *     只有本地首页能调。外面随便一个网页都改不了用户的收藏。
  *
  * 注意：这些方法是在 WebView 的 JS 线程上被调用的，所有 UI 操作都要转回主线程。
@@ -107,6 +107,13 @@ public class BrowserBridge {
     public void setEngine(String id) {
         if (!isHome || id == null || id.isEmpty()) return;
         main.post(() -> activity.setEngineFromHome(id));
+    }
+
+    /** 首屏把收藏重新排好之后，整份顺序交回来 */
+    @JavascriptInterface
+    public void saveFavorites(String json) {
+        if (!isHome || json == null || json.isEmpty()) return;
+        main.post(() -> activity.saveFavoritesFromHome(json));
     }
 
     /* ------------------------------------------------------------ 内部 -- */

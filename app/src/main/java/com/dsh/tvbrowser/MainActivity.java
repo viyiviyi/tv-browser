@@ -265,6 +265,11 @@ public class MainActivity extends Activity implements BrowserWebView.Listener {
         pushHomeData();
     }
 
+    /** 首屏调完「移动位置」把收藏顺序交回来 —— 顺序已经生效在页面上了，不用再回推 */
+    void saveFavoritesFromHome(String json) {
+        store.replaceFavorites(json);
+    }
+
     /* ------------------------------------------------------------- 生命周期 -- */
 
     @Override

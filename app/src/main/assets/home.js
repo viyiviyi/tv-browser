@@ -105,6 +105,7 @@
   var sheetTitle = document.getElementById('sheet-title');
   var sheetSite = document.getElementById('sheet-site');
   var sheetActions = document.getElementById('sheet-actions');
+  var hintEl = document.querySelector('.hint');
 
   /* -------------------------------------------------------------- 状态 -- */
 
@@ -113,6 +114,8 @@
     recent: [],
     engine: 'baidu',
     expanded: false,
+    /** 正在调整位置的收藏项下标；-1 = 不在移动模式 */
+    moving: -1,
     layout: { cell: 104, gap: 18, cols: 6 },
   };
 
@@ -369,7 +372,9 @@
     var shown = (!needMore || S.expanded) ? list : list.slice(0, Math.max(1, cols - 1));
 
     for (var i = 0; i < shown.length; i++) {
-      favGrid.appendChild(makeCard(shown[i], 'fav'));
+      var card = makeCard(shown[i], 'fav');
+      if (i === S.moving) card.classList.add('moving');
+      favGrid.appendChild(card);
     }
     if (needMore) favGrid.appendChild(makeMoreButton(S.expanded));
   }
@@ -451,7 +456,11 @@
         closeMenu();
       });
     } else {
-      addAction('从收藏中移除', true, function () {
+      addAction('移动位置', false, function () {
+        closeMenu();
+        startMove(url);
+      });
+      addAction('删除', true, function () {
         native('unfavorite', url);
         closeMenu();
       });
@@ -475,17 +484,107 @@
     return !sheet.hidden;
   }
 
+  /* -------------------------------------------------------- 移动收藏 -- */
+  /*
+   * 长按收藏项 →「移动位置」→ 进入移动模式：
+   *   ← ↑        往前挪一位
+   *   → ↓        往后挪一位
+   *   确定 / 返回  结束（顺序即时生效，结束时写回原生）
+   *
+   * 方向键本来归空间导航（换选中项），所以这里靠桥接层派发的 kb-key 事件
+   * 把它接过来。只有首屏在移动模式下会接，别的页面完全不受影响。
+   */
+
+  var HINT_IDLE = '长按确定键：收藏 / 删除';
+  var HINT_MOVING = '方向键挪动位置 · 确定键完成';
+
+  function movingNow() {
+    return S.moving >= 0;
+  }
+
+  function startMove(url) {
+    var i = S.favorites.indexOf(normalize(url));
+    if (i < 0) return false;
+    S.moving = i;
+    S.expanded = true;          // 展开全部：否则挪到看不见的位置人就懵了
+    renderFavorites();
+    if (hintEl) hintEl.textContent = HINT_MOVING;
+    return true;
+  }
+
+  function endMove() {
+    if (S.moving < 0) return false;
+    S.moving = -1;
+    renderFavorites();
+    if (hintEl) hintEl.textContent = HINT_IDLE;
+    native('saveFavorites', JSON.stringify(S.favorites));
+    return true;
+  }
+
+  /** ← ↑ 往前挪一位，→ ↓ 往后挪一位；到头了就不动 */
+  function moveFavorite(action) {
+    var list = S.favorites;
+    var i = S.moving;
+    if (i < 0) return false;
+    var j = (action === 'left' || action === 'up') ? i - 1 : i + 1;
+    if (j < 0 || j >= list.length) return true;     // 按键算处理过了，只是没得挪
+    var tmp = list[i];
+    list[i] = list[j];
+    list[j] = tmp;
+    S.moving = j;
+    renderFavorites();
+    reselect(list[j]);
+    return true;
+  }
+
+  /** 重排之后 DOM 是新的一批元素，把导航脚本的选中框挪到同一张卡上 */
+  function reselect(url) {
+    try {
+      var target = normalize(url);
+      var cards = favGrid.querySelectorAll('.site');
+      var el = null;
+      for (var k = 0; k < cards.length; k++) {
+        if (cards[k].dataset.url === target) { el = cards[k]; break; }
+      }
+      if (!el || !window.__kb || typeof window.__kb.selectAt !== 'function') return;
+      var list = window.__kb.refresh();
+      for (var n = 0; n < list.length; n++) {
+        if (list[n].el === el) { window.__kb.selectAt(n); return; }
+      }
+    } catch (e) { /* ignore */ }
+  }
+
+  // 方向键 / 确定键：移动模式下由首屏接管，不再交给空间导航
+  document.addEventListener('kb-key', function (e) {
+    if (!movingNow()) return;
+    var action = e.detail && e.detail.action;
+    if (action === 'ok') {
+      e.preventDefault();
+      endMove();
+      return;
+    }
+    if (action === 'left' || action === 'right' || action === 'up' || action === 'down') {
+      e.preventDefault();
+      moveFavorite(action);
+    }
+  }, true);
+
   // 长按确定键：原生识别长按，脚本在选中项上派发这个事件
   document.addEventListener('kb-longpress', function (e) {
-    if (menuOpen()) return;
+    if (menuOpen() || movingNow()) return;      // 移动中长按没有意义，忽略
     var card = e.target && e.target.closest ? e.target.closest('.site') : null;
     if (!card || !card.dataset.url) return;
     e.preventDefault();
     openMenu(card.dataset.url, card.dataset.kind || 'recent');
   }, true);
 
-  // 返回键：菜单开着就关菜单，别让它一路退到关标签页
+  // 返回键：移动中就结束移动，菜单开着就关菜单，别让它一路退到关标签页
   document.addEventListener('kb-back', function (e) {
+    if (movingNow()) {
+      e.preventDefault();
+      endMove();                                // 位置已经生效，不回滚
+      return;
+    }
     if (!menuOpen()) return;
     e.preventDefault();
     closeMenu();

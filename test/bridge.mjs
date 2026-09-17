@@ -205,6 +205,56 @@ try {
     await page.close();
   }
 
+  /* ---------------------------------------------- 页面接管方向键 -- */
+  {
+    const page = await browser.newPage({ viewport: { width: 960, height: 540 } });
+    await boot(page);
+
+    // 页面主动接管（首屏的"移动收藏"模式就是这么干的）
+    await page.evaluate(() => {
+      window.__kbKeys = [];
+      document.addEventListener('kb-key', (e) => {
+        window.__kbKeys.push(e.detail.action);
+        e.preventDefault();
+      }, true);
+    });
+
+    const handled = await key(page, 'down');
+    const seen = await page.evaluate(() => window.__kbKeys);
+    check('页面能通过 kb-key 把方向键接管过去', handled === true && seen.length === 1,
+      JSON.stringify({ handled, seen }));
+
+    const boxOn = await page.evaluate(() =>
+      document.getElementById('kb-box').classList.contains('kb-on'));
+    check('接管之后空间导航不再去挪选中框', boxOn === false, String(boxOn));
+
+    await key(page, 'ok');
+    const afterOk = await page.evaluate(() => window.__kbKeys);
+    check('确定键也一样能被接管', afterOk.length === 2, JSON.stringify(afterOk));
+    await page.close();
+  }
+
+  {
+    // 没人接的时候一切照旧：事件照样派发，但按键还是走空间导航
+    const page = await browser.newPage({ viewport: { width: 960, height: 540 } });
+    await boot(page);
+
+    await page.evaluate(() => {
+      window.__kbKeys = [];
+      document.addEventListener('kb-key', (e) => { window.__kbKeys.push(e.detail.action); });
+    });
+
+    const handled = await key(page, 'down');
+    const boxOn = await page.evaluate(() =>
+      document.getElementById('kb-box').classList.contains('kb-on'));
+    const seen = await page.evaluate(() => window.__kbKeys);
+
+    check('没人 preventDefault 时，方向键照常换选中项', handled === true && boxOn === true,
+      JSON.stringify({ handled, boxOn }));
+    check('事件照常派发出来（页面只是没接）', seen.length === 1, JSON.stringify(seen));
+    await page.close();
+  }
+
   /* ---------------------------------------------------------- 确定键 -- */
   {
     const page = await browser.newPage({ viewport: { width: 960, height: 540 } });

@@ -243,6 +243,10 @@ function tvInstall(win) {
    *   ↑ ↓ ← →  换一个目标；全屏看视频时改成交给播放器（快退快进 / 音量）
    *   确定      点选中项；选中的是视频窗口时 = 播放/暂停，双击 = 全屏
    *   长按确定  只在页面上派发 kb-longpress（首屏的收藏/删除菜单用它）
+   *
+   * 在交给空间导航之前，会先在文档上派发一个可取消的 kb-key。页面接住的话
+   * （调了 preventDefault）这次按键就归页面 —— 首屏的"移动收藏"模式用它
+   * 把方向键从"换选中项"改成"挪动这一项"。没人接的时候没有任何副作用。
    */
   function dispatchKey(action) {
     const c = win.__kb;
@@ -262,6 +266,14 @@ function tvInstall(win) {
       }
       return synth(action);
     }
+
+    // 页面自己要处理这次按键吗（首屏的移动模式）
+    try {
+      const ev = new win.CustomEvent('kb-key', {
+        bubbles: true, cancelable: true, detail: { action },
+      });
+      if (doc.dispatchEvent(ev) === false) return true;
+    } catch { /* ignore */ }
 
     try {
       if (DIRECTIONS[action]) {

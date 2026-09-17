@@ -65,6 +65,7 @@ async function openHome(browser, width, height) {
     window.__unfavCalls = [];
     window.__forgetCalls = [];
     window.__engines = [];
+    window.__savedFavorites = [];
     window.__readyCalls = 0;
     window.kbHost = {
       ready() { window.__readyCalls++; },
@@ -77,6 +78,7 @@ async function openHome(browser, width, height) {
       unfavorite(url) { window.__unfavCalls.push(url); },
       forget(url) { window.__forgetCalls.push(url); },
       setEngine(id) { window.__engines.push(id); },
+      saveFavorites(json) { window.__savedFavorites.push(JSON.parse(json)); },
     };
   });
   // favicon 一律抓不到：验证"回落首字母色块"这条路径真的成立
@@ -358,22 +360,127 @@ try {
   }
 
   {
-    // 收藏区里的卡片长按 → 只能"从收藏中移除"
+    // 收藏区里的卡片长按 → 「移动位置」和「删除」，不带最近打开那一套
     const page = await openHome(browser, 960, 540);
     const target = 'https://www.taobao.com';
     const idx = await selectCard(page, target, 'fav');
     check('收藏区的卡片也能被选中', idx >= 0, String(idx));
     await page.evaluate(() => window.__kbTV.key('longok'));
     const actions = await page.locator('#sheet-actions .act').allInnerTexts();
-    check('收藏项长按菜单里有「从收藏中移除」',
-      actions.some((t) => t.includes('从收藏中移除')), JSON.stringify(actions));
+    check('收藏项长按菜单里有「移动位置」',
+      actions.some((t) => t.includes('移动位置')), JSON.stringify(actions));
+    check('收藏项长按菜单里有「删除」',
+      actions.some((t) => t === '删除'), JSON.stringify(actions));
     check('收藏项长按菜单里没有「从最近打开中删除」',
       !actions.some((t) => t.includes('最近打开')), JSON.stringify(actions));
 
-    await page.locator('#sheet-actions .act').first().click();
+    await page.locator('#sheet-actions .act', { hasText: '删除' }).first().click();
     await page.waitForTimeout(60);
     const unfav = await page.evaluate(() => window.__unfavCalls);
-    check('点「从收藏中移除」会通知原生', unfav.includes(target), JSON.stringify(unfav));
+    check('点「删除」会通知原生', unfav.includes(target), JSON.stringify(unfav));
+    await page.close();
+  }
+
+  /* ------------------------------------------------------ 移动收藏位置 -- */
+  {
+    const page = await openHome(browser, 960, 540);
+    const before = await page.evaluate(() => window.tvHome.state().favorites);
+
+    // 选中 3 号位（下标 2）的收藏，长按 → 移动位置
+    const target = before[2];
+    await selectCard(page, target, 'fav');
+    await page.evaluate(() => window.__kbTV.key('longok'));
+    await page.locator('#sheet-actions .act', { hasText: '移动位置' }).first().click();
+    await page.waitForTimeout(80);
+
+    check('点了「移动位置」之后菜单关掉', !(await page.locator('#sheet').isVisible()));
+    const moving = await page.locator('#fav-grid .site.moving').count();
+    check('正在移动的那一张会被标出来', moving === 1, String(moving));
+    check('提示文字换成了移动模式的说明',
+      (await page.locator('.hint').innerText()).includes('挪动'), await page.locator('.hint').innerText());
+
+    // ← 往前挪一位
+    await page.evaluate(() => window.__kbTV.key('left'));
+    await page.waitForTimeout(60);
+    let now = await page.evaluate(() => window.tvHome.state().favorites);
+    check('按 ← 往前挪了一位', now[1] === target, JSON.stringify(now));
+
+    // → 挪回去，再往后挪一位
+    await page.evaluate(() => window.__kbTV.key('right'));
+    await page.waitForTimeout(60);
+    await page.evaluate(() => window.__kbTV.key('right'));
+    await page.waitForTimeout(60);
+    now = await page.evaluate(() => window.tvHome.state().favorites);
+    check('按 → 往后挪了一位', now[3] === target, JSON.stringify(now));
+
+    // ↑ ↓ 也能挪（一维顺序，只是方向不同）
+    await page.evaluate(() => window.__kbTV.key('up'));
+    await page.waitForTimeout(60);
+    now = await page.evaluate(() => window.tvHome.state().favorites);
+    check('按 ↑ 也是往前挪一位', now[2] === target, JSON.stringify(now));
+
+    // 挪到最前面之后，再往前应该原地不动
+    for (let i = 0; i < 6; i++) {
+      await page.evaluate(() => window.__kbTV.key('left'));
+    }
+    await page.waitForTimeout(60);
+    now = await page.evaluate(() => window.tvHome.state().favorites);
+    check('挪到头就不动了（不会绕到末尾）', now[0] === target, JSON.stringify(now));
+
+    // 确定键结束，把新顺序写回原生
+    await page.evaluate(() => window.__kbTV.key('ok'));
+    await page.waitForTimeout(80);
+    check('确定之后退出移动模式', (await page.locator('#fav-grid .site.moving').count()) === 0);
+    check('提示文字变回原来的', (await page.locator('.hint').innerText()).includes('长按'),
+      await page.locator('.hint').innerText());
+
+    const saved = await page.evaluate(() => window.__savedFavorites);
+    check('把排好的顺序交给了原生', saved.length === 1, JSON.stringify(saved.length));
+    check('交给原生的顺序就是挪完的顺序', saved[0] && saved[0][0] === target,
+      JSON.stringify(saved[0] && saved[0].slice(0, 3)));
+
+    // 交完之后导航脚本的选中框还在同一张卡上
+    const stillSelected = await page.evaluate(() =>
+      window.__kb.state.current && window.__kb.state.current.el.dataset.url);
+    check('重排之后选中框还跟着那一张', stillSelected === target, String(stillSelected));
+    await page.close();
+  }
+
+  {
+    // 返回键也能结束移动（位置不回滚）
+    const page = await openHome(browser, 960, 540);
+    const before = await page.evaluate(() => window.tvHome.state().favorites);
+    await selectCard(page, before[1], 'fav');
+    await page.evaluate(() => window.__kbTV.key('longok'));
+    await page.locator('#sheet-actions .act', { hasText: '移动位置' }).first().click();
+    await page.waitForTimeout(80);
+
+    await page.evaluate(() => window.__kbTV.key('left'));
+    await page.waitForTimeout(60);
+    const handled = await page.evaluate(() => window.__kbTV.key('back'));
+    await page.waitForTimeout(60);
+
+    check('移动模式下返回键被页面接住', handled === true, String(handled));
+    check('返回键退出移动模式', (await page.locator('#fav-grid .site.moving').count()) === 0);
+    const now = await page.evaluate(() => window.tvHome.state().favorites);
+    check('已经挪过的位置保留下来', now[0] === before[1], JSON.stringify(now));
+    const saved = await page.evaluate(() => window.__savedFavorites);
+    check('返回键结束也会写回原生', saved.length === 1, String(saved.length));
+    await page.close();
+  }
+
+  {
+    // 不在移动模式时，方向键必须还给导航脚本（别把普通浏览也拦了）
+    const page = await openHome(browser, 960, 540);
+    await page.evaluate(() => window.__kbTV.key('down'));
+    const selected = await page.evaluate(() => !!window.__kb.state.current);
+    check('没在移动模式时方向键照常换选中项', selected === true);
+
+    const history = await page.evaluate(() => window.tvHome.state().favorites);
+    await page.evaluate(() => window.__kbTV.key('right'));
+    const after = await page.evaluate(() => window.tvHome.state().favorites);
+    check('没在移动模式时方向键不会改动收藏顺序',
+      JSON.stringify(history) === JSON.stringify(after));
     await page.close();
   }
 

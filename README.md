@@ -52,6 +52,11 @@
 - 图标大小另有一个总开关：`home.js` 里的 `ICON_SCALE`（当前 `0.75`）。
   它同时影响图标、间距和一排能放的数量 —— 960×540 下是 77px、一排 9 个；
   1920×1080 下是 126px、一排 11 个。嫌大嫌小就改这一个数。
+- **长按确定键弹菜单**：在「最近打开」里是「收藏这个网站 / 从最近打开中删除」，
+  在「收藏」里是「移动位置 / 删除」。
+  选了「移动位置」就进入**移动模式**：方向键挪动这一项（← ↑ 往前，→ ↓ 往后），
+  确定键或返回键结束，新的顺序会写回原生。
+  移动时会自动把收藏展开（否则挪到看不见的位置就懵了），正在挪的那一张会高亮出来。
 
 想把首屏先看一眼再决定装不装：
 
@@ -72,7 +77,7 @@ $env:NODE_PATH="C:\nvm4w\nodejs\node_modules"; node tools\preview.mjs
 | 收藏 | 预置 12 个常见站点；用户自己加的走下面的"长按" |
 | 收藏超过一排 | 折出「更多」按钮，点开展开全部 |
 | 最近打开 | 只留一排，列数随屏幕宽度算 |
-| 收藏 / 删除 | **在「最近打开」里选中一个网站，长按确定键** → 弹出菜单：「收藏这个网站」/「从最近打开中删除」；在「收藏」里长按则是「从收藏中移除」 |
+| 收藏 / 删除 / 移动 | **在「最近打开」里选中一个网站，长按确定键** → 弹出菜单：「收藏这个网站」/「从最近打开中删除」；在「收藏」里长按则是「移动位置」/「删除」，选「移动位置」后可以用方向键调顺序 |
 | 打字 | 直接用电视/盒子自带的软键盘。输入框聚焦、弹键盘、用键盘的方向键选字，全都交给 WebView 和输入法自己处理，应用和脚本一概不插手 |
 | 链接开在新标签页里 | 页面点开 `target=_blank` / `window.open` 的链接时，脚本通知 Android 开一个新的 WebView 标签页；**返回键 = 退回刚才那一页**，原来那一页原地还原（不会重新加载） |
 | 首屏不会被顶掉 | 首屏是标签页栈最底下那一层，永远不回收；它里面的任何 http 跳转都开成新标签页 |
@@ -93,7 +98,7 @@ $env:NODE_PATH="C:\nvm4w\nodejs\node_modules"; node tools\preview.mjs
 | ↑ ↓ ← → | 选中上/下/左/右邻接的卡片、按钮、链接（同一行/同一列优先，选中项会自动滚进视口）；**全屏看视频时**交还播放器：← → 快退快进、↑ ↓ 音量 |
 | 确定 | 点击选中项；选中的是视频窗口（或正在全屏）时 = 播放/暂停 |
 | 确定（连按两下） | 进全屏；全屏时再连按两下退出全屏 |
-| **长按确定**（500ms） | 选中项上派发 `kb-longpress`：**首屏弹出「收藏 / 删除」菜单**；普通网站没人接这个事件，于是什么也不发生 |
+| **长按确定**（500ms） | 选中项上派发 `kb-longpress`：**首屏弹出菜单**（最近打开里是收藏/删除，收藏里是移动位置/删除）；普通网站没人接这个事件，于是什么也不发生 |
 | 返回（短按） | ① 关掉首屏的菜单 → ② 退出全屏 → ③ 关掉弹层 → ④ 退出输入框 → ⑤ 取消选中（记住位置）→ ⑥ 退这个标签页里的上一页 → ⑦ 没有上一页了才关掉标签页 → ⑧ 只剩首屏时提示"再按一次返回键退出" |
 | 返回（连按两下 / 长按） | 直接关掉当前标签页；只剩首屏时直接退出应用 |
 | 按住方向 | 连续移动（连发） |
@@ -203,7 +208,15 @@ kbHost.hover(x, y)                              // 选中项中心点：原生�
 kbHost.select(x, y, w, h, label)                // 选中框：确定键没点中时原生拿它兜底点击
 // 下面几个只有本地首屏能调，外面的网页改不了用户的收藏
 kbHost.favorite(url) / unfavorite(url) / forget(url) / setEngine(id)
+kbHost.saveFavorites(json)                      // 首屏把收藏重排之后，整份顺序交回来
 ```
+
+反方向还有两个**可取消的 DOM 事件**，页面接住就归页面，没人接就照常走导航：
+
+| 事件 | 什么时候派发 | 首屏拿它做什么 |
+| --- | --- | --- |
+| `kb-longpress` | 长按确定键，派在**当前选中项**上 | 弹出收藏/删除、移动位置菜单 |
+| `kb-key` | 每次方向键和确定键，派在 `document` 上 | 移动模式下把方向键从"换选中项"改成"挪动这一项" |
 
 首屏（`assets/home.html` + `home.js` + `home.css`）由原生通过
 `window.tvHome.setData({favorites, recent, engine})` 喂数据；它自己只管显示和交互 ——
@@ -218,9 +231,9 @@ node test\core.test.mjs                                        # 23 项：导航
 
 # 这个仓库自己这一层
 cd ..\tv-browser
-powershell -File tools\build.ps1 -Test                          # 64 项：JVM 单元测试
-$env:NODE_PATH="C:\nvm4w\nodejs\node_modules"; node test\bridge.mjs  # 33 项：遥控器桥在 Chromium 里的契约
-$env:NODE_PATH="C:\nvm4w\nodejs\node_modules"; node test\home.mjs    # 67 项：首屏在 Chromium 里的行为与版面
+powershell -File tools\build.ps1 -Test                          # 69 项：JVM 单元测试
+$env:NODE_PATH="C:\nvm4w\nodejs\node_modules"; node test\bridge.mjs  # 38 项：遥控器桥在 Chromium 里的契约
+$env:NODE_PATH="C:\nvm4w\nodejs\node_modules"; node test\home.mjs    # 86 项：首屏在 Chromium 里的行为与版面
 ```
 
 （后两个要 playwright；`NODE_PATH` 指的是放全局 `node_modules` 的地方，按自己的环境改。）
@@ -231,7 +244,7 @@ JVM 单元测试分四层：
 | --- | --- | --- |
 | `RemoteKeyTest` | 8 | 遥控器键值 / 按键文字 → 动作名（含 KeyEvent 数值的交叉校验） |
 | `KeyPolicyTest` | 10 | 按下 / 抬起 / 长按分别由谁处理 |
-| `SiteStoreTest` | 18 | 地址归一化（`//`、`#片段`、根路径斜杠）、收藏与最近打开的去重/上限/排序 |
+| `SiteStoreTest` | 23 | 地址归一化（`//`、`#片段`、根路径斜杠）、收藏与最近打开的去重/上限/排序 |
 | `BrowserWebViewTest` | 28 | **用 Robolectric 在 JVM 上跑真实的 Activity / WebView / 标签页栈** |
 
 `BrowserWebViewTest` 是最有价值的一层，它验的正是"只有装到电视上才看得出来"的胶水代码：
